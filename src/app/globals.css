@@ -1948,3 +1948,43 @@ tr:has(.is-dirty) { background: rgba(231, 226, 68, 0.07); }
 
 /* Links inside the shell */
 a.fc-sidebar-link, a.fc-bottom-nav-btn { text-decoration: none; }
+
+/* ── Sign-in and code management ───────────────────────────────────────*/
+.qc-signin-copy {
+  font-size: 12px;
+  color: var(--fc-ink-500);
+  line-height: 1.55;
+  margin: 0 0 14px;
+  max-width: 62ch;
+}
+.qc-signin-copy code {
+  font-family: var(--fc-font-mono);
+  background: var(--fc-cream);
+  border: 1px solid var(--fc-ink-100);
+  border-radius: var(--fc-radius-1);
+  padding: 1px 5px;
+  font-size: 11px;
+}
+.qc-signin-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-top: 14px;
+}
+.qc-signed-in {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.qc-signed-in-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  flex: 1;
+  justify-content: flex-end;
+}
+.qc-signed-in-actions form { flex: 1 1 100%; }

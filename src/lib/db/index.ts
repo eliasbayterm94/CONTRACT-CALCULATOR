@@ -232,7 +232,7 @@ export function getSetting<T>(key: string, fallback: T): T {
   }
 }
 
-export function setSetting(key: string, value: unknown): void {
+export function setSetting<T = unknown>(key: string, value: T): void {
   getDb()
     .prepare(
       `INSERT INTO settings (key, value, updated_at) VALUES (?, ?, datetime('now'))

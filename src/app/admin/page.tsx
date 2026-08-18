@@ -3,9 +3,9 @@ import DestinationsEditor from '@/components/admin/DestinationsEditor';
 import PackagingProcessEditor from '@/components/admin/PackagingProcessEditor';
 import PolicyEditor from '@/components/admin/PolicyEditor';
 import { FxEditor, MonthTableEditor } from '@/components/admin/MarketEditor';
-import { SignInForm, SignOutButton } from '@/components/admin/SignInForm';
+import { ChangeCodeForm, CreateCodeForm, SignInForm, SignOutButton } from '@/components/admin/SignInForm';
 import { saveKcPrices, savePremiums } from '@/app/actions';
-import { currentAdmin } from '@/lib/auth';
+import { currentAdmin, isAdminCodeSet } from '@/lib/auth';
 import {
   getAuditLog,
   getCostLines,
@@ -41,6 +41,8 @@ export default async function AdminPage() {
   ensureSeeded();
   const admin = await currentAdmin();
   const locked = !admin;
+  const codeSet = isAdminCodeSet();
+  const codeManagedByEnv = Boolean(process.env.ADMIN_PASSWORD);
 
   const reference = getReferenceData();
   const allLines = getCostLines(true);
@@ -91,14 +93,19 @@ export default async function AdminPage() {
 
       <section className="qc-panel">
         {admin ? (
-          <div className="qc-panel-body" style={{ display: 'flex', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
+          <div className="qc-panel-body qc-signed-in">
             <span style={{ fontSize: 13 }}>
-              Signed in as <strong>{admin}</strong>.
+              Signed in as <strong>{admin}</strong>. The session lasts 12 hours.
             </span>
-            <SignOutButton />
+            <div className="qc-signed-in-actions">
+              <ChangeCodeForm managedByEnv={codeManagedByEnv} />
+              <SignOutButton />
+            </div>
           </div>
-        ) : (
+        ) : codeSet ? (
           <SignInForm />
+        ) : (
+          <CreateCodeForm />
         )}
       </section>
 

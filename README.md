@@ -121,16 +121,28 @@ dollar.
 
 ```bash
 npm install
-cp .env.example .env.local     # set ADMIN_PASSWORD and SESSION_SECRET
 npm run dev
 ```
 
-`SESSION_SECRET` has no default on purpose — without it, admin sign-in is disabled rather than
-falling back to something guessable:
+No configuration needed. The first person to open `/admin` chooses the admin code on screen, and
+the key that signs sessions is generated and stored on first boot.
 
-```bash
-node -e "console.log(require('crypto').randomBytes(32).toString('base64url'))"
-```
+### The admin code
+
+Only the salt and a scrypt hash are stored — never the code — so it cannot be read back out of the
+database. Keep a copy somewhere safe; there is no recovery from inside the app.
+
+- **Change it** from the admin header, proving you know the current one.
+- **Guessing is throttled**: four free attempts, then the wait doubles from 15 seconds up to 15
+  minutes. That is what makes a short code safe.
+- Sessions last 12 hours.
+- The **name** field only signs the audit log. It is a label, not a credential — one shared code,
+  not per-person accounts. If you need Ana unable to sign in as Elias, that needs real users.
+
+`ADMIN_PASSWORD` in the environment still overrides the stored code, which is how you recover
+access or fix the code from a deployment pipeline. When it is set, the in-app change is disabled.
+`SESSION_SECRET` is worth setting only on a multi-instance deployment, so every instance signs
+with the same key.
 
 | Command | What it does |
 | --- | --- |

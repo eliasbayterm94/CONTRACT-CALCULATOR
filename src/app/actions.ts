@@ -5,10 +5,15 @@ import { cookies } from 'next/headers';
 import {
   COOKIE_MAX_AGE,
   COOKIE_NAME,
+  clearFailedAttempts,
   currentAdmin,
+  isAdminCodeSet,
   issueToken,
+  lockoutRemaining,
+  recordFailedAttempt,
   requireAdmin,
-  verifyPassword,
+  setAdminCode,
+  verifyAdminCode,
 } from '@/lib/auth';
 import { getDb, logAudit, setKcPrice, setPremium, setSetting } from '@/lib/db';
 import { clearFxOverride, overrideFxRate, refreshFxRates } from '@/lib/fx';
@@ -28,15 +33,10 @@ const str = (form: FormData, key: string): string => String(form.get(key) ?? '')
 
 /* ------------------------------------------------------------------ auth -- */
 
-export async function signIn(_prev: ActionResult | null, form: FormData): Promise<ActionResult> {
-  const password = str(form, 'password');
-  if (!password) return { ok: false, message: 'Enter the admin password.' };
-  if (!process.env.ADMIN_PASSWORD || !process.env.SESSION_SECRET) {
-    return { ok: false, message: 'ADMIN_PASSWORD and SESSION_SECRET are not configured on the server.' };
-  }
-  if (!verifyPassword(password)) return { ok: false, message: 'Incorrect password.' };
+/** Minimum that is worth calling a code rather than a guess. */
+const MIN_CODE_LENGTH = 6;
 
-  const actor = str(form, 'name') || 'admin';
+async function startSession(actor: string): Promise<void> {
   const store = await cookies();
   store.set(COOKIE_NAME, issueToken(actor), {
     httpOnly: true,
@@ -45,9 +45,87 @@ export async function signIn(_prev: ActionResult | null, form: FormData): Promis
     path: '/',
     maxAge: COOKIE_MAX_AGE,
   });
+}
+
+function waitMessage(seconds: number): string {
+  if (seconds >= 60) {
+    const minutes = Math.ceil(seconds / 60);
+    return `Too many attempts. Try again in ${minutes} minute${minutes === 1 ? '' : 's'}.`;
+  }
+  return `Too many attempts. Try again in ${seconds} second${seconds === 1 ? '' : 's'}.`;
+}
+
+/** First run: whoever opens admin first chooses the code. */
+export async function createAdminCode(
+  _prev: ActionResult | null,
+  form: FormData,
+): Promise<ActionResult> {
+  if (isAdminCodeSet()) {
+    return { ok: false, message: 'A code is already set. Sign in with it, or change it once inside.' };
+  }
+  const code = str(form, 'code');
+  const confirm = str(form, 'confirm');
+  if (code.length < MIN_CODE_LENGTH) {
+    return { ok: false, message: `Use at least ${MIN_CODE_LENGTH} characters.` };
+  }
+  if (code !== confirm) return { ok: false, message: 'The two codes do not match.' };
+
+  const actor = str(form, 'name') || 'admin';
+  setAdminCode(code);
+  await startSession(actor);
+  logAudit(actor, 'session', null, 'code_created');
+  revalidatePath('/', 'layout');
+  return { ok: true, message: `Code set. You are signed in as ${actor}.` };
+}
+
+export async function signIn(_prev: ActionResult | null, form: FormData): Promise<ActionResult> {
+  const waiting = lockoutRemaining();
+  if (waiting > 0) return { ok: false, message: waitMessage(waiting) };
+
+  const code = str(form, 'code');
+  if (!code) return { ok: false, message: 'Enter the admin code.' };
+  if (!isAdminCodeSet()) return { ok: false, message: 'No admin code has been set yet.' };
+
+  if (!verifyAdminCode(code)) {
+    const wait = recordFailedAttempt();
+    logAudit(str(form, 'name') || 'unknown', 'session', null, 'sign_in_failed');
+    return {
+      ok: false,
+      message: wait > 0 ? `Wrong code. ${waitMessage(wait)}` : 'Wrong code.',
+    };
+  }
+
+  clearFailedAttempts();
+  const actor = str(form, 'name') || 'admin';
+  await startSession(actor);
   logAudit(actor, 'session', null, 'sign_in');
   revalidatePath('/', 'layout');
   return { ok: true, message: `Signed in as ${actor}.` };
+}
+
+/** Change the code from inside. Requires the current one, so a stolen session cannot lock you out. */
+export async function changeAdminCode(
+  _prev: ActionResult | null,
+  form: FormData,
+): Promise<ActionResult> {
+  const g = await guard();
+  if ('ok' in g) return g;
+  if (process.env.ADMIN_PASSWORD) {
+    return { ok: false, message: 'The code is set by ADMIN_PASSWORD on this server. Change it there.' };
+  }
+  const current = str(form, 'current');
+  const next = str(form, 'code');
+  const confirm = str(form, 'confirm');
+  if (!verifyAdminCode(current)) return { ok: false, message: 'That is not the current code.' };
+  if (next.length < MIN_CODE_LENGTH) {
+    return { ok: false, message: `Use at least ${MIN_CODE_LENGTH} characters.` };
+  }
+  if (next !== confirm) return { ok: false, message: 'The two codes do not match.' };
+  if (next === current) return { ok: false, message: 'That is the code you already have.' };
+
+  setAdminCode(next);
+  logAudit(g.actor, 'session', null, 'code_changed');
+  return { ok: true, message: 'Code changed. It applies from the next sign-in.' };
 }
 
 export async function signOut(): Promise<void> {

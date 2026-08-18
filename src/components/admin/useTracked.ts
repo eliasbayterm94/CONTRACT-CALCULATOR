@@ -46,7 +46,7 @@ export function useTracked<T extends { key: string }>(saved: T[]) {
       const original = saved.find((r) => r.key === row.key);
       if (!original) continue;
       for (const field of Object.keys(row) as Array<keyof T>) {
-        if (!Object.is(row[field], original[field])) {
+        if (differs(row[field], original[field])) {
           out.add(row.key);
           break;
         }
@@ -60,12 +60,27 @@ export function useTracked<T extends { key: string }>(saved: T[]) {
       const original = saved.find((r) => r.key === key);
       const current = rows.find((r) => r.key === key);
       if (!original || !current) return false;
-      return !Object.is(original[field], current[field]);
+      return differs(original[field], current[field]);
     },
     [rows, saved],
   );
 
   return { rows, update, resetRow, resetAll, dirtyKeys, isDirty };
+}
+
+/**
+ * Compare by value, not identity.
+ *
+ * The server hands us a fresh object on every render, so an array field like a
+ * destination's allowed incoterms is never the same instance twice. Identity
+ * comparison marked every row edited the moment the page loaded.
+ */
+function differs(a: unknown, b: unknown): boolean {
+  if (Object.is(a, b)) return false;
+  if (a !== null && b !== null && typeof a === 'object' && typeof b === 'object') {
+    return JSON.stringify(a) !== JSON.stringify(b);
+  }
+  return true;
 }
 
 /** `is-dirty` only when it is, so the class list stays readable in the markup. */
