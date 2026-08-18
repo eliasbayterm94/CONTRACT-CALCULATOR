@@ -23,16 +23,16 @@ export function seed(now = new Date()): void {
   const costLine = db.prepare(`
     INSERT INTO cost_lines
       (key, label, cost_group, basis, driver, currency, amount, lbs_per_unit,
-       per_month, optional, default_on, is_margin, sort_order, active)
+       per_month, is_margin, waivable, sort_order, active)
     VALUES (@key, @label, @group, @basis, @driver, @currency, @amount, @lbsPerUnit,
-            @perMonth, @optional, @defaultOn, @isMargin, @sortOrder, 1)
+            @perMonth, @isMargin, @waivable, @sortOrder, 1)
     ON CONFLICT(key) DO UPDATE SET
       label = excluded.label, cost_group = excluded.cost_group, basis = excluded.basis,
       driver = excluded.driver, sort_order = excluded.sort_order`);
 
   const packaging = db.prepare(`
-    INSERT INTO packaging_types (key, label, kg_per_unit, lbs_per_unit, amount, currency, active)
-    VALUES (@key, @label, @kgPerUnit, @lbsPerUnit, @amount, @currency, 1)
+    INSERT INTO packaging_types (key, label, kg_per_unit, lbs_per_unit, amount, currency, trader_default, active)
+    VALUES (@key, @label, @kgPerUnit, @lbsPerUnit, @amount, @currency, @traderDefault, 1)
     ON CONFLICT(key) DO UPDATE SET label = excluded.label`);
 
   const process = db.prepare(`
@@ -74,12 +74,11 @@ export function seed(now = new Date()): void {
       costLine.run({
         ...line,
         perMonth: line.perMonth ? 1 : 0,
-        optional: line.optional ? 1 : 0,
-        defaultOn: line.defaultOn ? 1 : 0,
         isMargin: line.isMargin ? 1 : 0,
+        waivable: line.waivable ? 1 : 0,
       });
     }
-    for (const p of SEED_PACKAGING) packaging.run(p);
+    for (const p of SEED_PACKAGING) packaging.run({ ...p, traderDefault: p.traderDefault ? 1 : 0 });
     for (const p of SEED_PROCESSES) process.run(p);
     SEED_DESTINATIONS.forEach((d, i) =>
       destination.run({

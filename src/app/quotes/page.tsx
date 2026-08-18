@@ -1,9 +1,11 @@
+import Link from 'next/link';
 import { getDb } from '@/lib/db';
 import { ensureSeeded } from '@/lib/db/seed';
-import { monthKeyLabel } from '@/lib/kc';
-import type { QuoteInput, QuoteResult, ReferenceData } from '@/lib/pricing/types';
-import { usdPerCopToTrm } from '@/lib/pricing/units';
-import { cents, money, percent, plain, shortDate, unitPrice } from '@/lib/format';
+import { currentAdmin } from '@/lib/auth';
+import { monthLabel } from '@/lib/pricing/schedule';
+import type { ContractResult, QuoteInput, QuoteResult, ReferenceData, Shipment } from '@/lib/pricing/types';
+import { PRICE_DP, UNIT_LABEL, totalInQuoteCurrency, usdPerCopToTrm } from '@/lib/pricing/units';
+import { cents, money, percent, plain, shortDate } from '@/lib/format';
 
 export const dynamic = 'force-dynamic';
 
@@ -11,102 +13,119 @@ interface QuoteRow {
   id: number;
   reference: string;
   client_name: string | null;
-  notes: string | null;
   input_json: string;
   result_json: string;
   snapshot_json: string;
+  shipments_json: string | null;
+  from_month: string | null;
+  to_month: string | null;
+  hold_months: number | null;
+  waived_fixed_cost: number;
   chosen_margin: number | null;
   chosen_price_usd_per_lb: number | null;
   created_at: string;
   created_by: string | null;
 }
 
-export default function QuotesPage() {
+export default async function QuotesPage() {
   ensureSeeded();
-  const rows = getDb()
-    .prepare('SELECT * FROM quotes ORDER BY id DESC LIMIT 100')
-    .all() as QuoteRow[];
+  const isAdmin = Boolean(await currentAdmin());
+  const rows = getDb().prepare('SELECT * FROM quotes ORDER BY id DESC LIMIT 100').all() as QuoteRow[];
 
   return (
-    <div className="space-y-5">
-      <section className="card p-4">
-        <h1 className="text-sm font-bold">Saved quotes</h1>
-        <p className="mt-1 text-[0.8125rem]" style={{ color: 'var(--text-muted)' }}>
+    <>
+      <div className="qc-admin-intro">
+        <h1>Quote history</h1>
+        <p>
           Each quote stores the KC price, the premium, every exchange rate and the whole cost table
           as they stood when it was priced, so the number can always be explained later.
         </p>
-      </section>
+      </div>
 
-      {rows.length === 0 ? (
-        <section className="card p-8 text-center text-sm" style={{ color: 'var(--text-muted)' }}>
-          No quotes saved yet. Build one on the{' '}
-          <a href="/" className="font-semibold underline">
-            quote screen
-          </a>{' '}
-          and press Save.
-        </section>
-      ) : (
-        <section className="card">
-          <div className="scroll-x">
-            <table className="grid">
+      <section className="qc-panel">
+        {rows.length === 0 ? (
+          <p className="qc-empty">
+            No quotes saved yet. Build one on the <Link href="/">quote screen</Link> and press Save.
+          </p>
+        ) : (
+          <div className="qc-table-wrap">
+            <table className="qc-table">
               <thead>
                 <tr>
                   <th>Reference</th>
                   <th>Client</th>
-                  <th>Shipment</th>
+                  <th>Shipment window</th>
                   <th>Destination</th>
                   <th>Terms</th>
-                  <th className="num">Volume</th>
-                  <th className="num">KC</th>
-                  <th className="num">Cost</th>
-                  <th className="num">Margin</th>
-                  <th className="num">Price</th>
-                  <th className="num">Value</th>
-                  <th className="num">TRM</th>
+                  <th className="qc-num">Volume</th>
+                  <th className="qc-num">KC</th>
+                  {isAdmin && <th className="qc-num">Cost</th>}
+                  {isAdmin && <th className="qc-num">Margin</th>}
+                  <th className="qc-num">Price</th>
+                  <th className="qc-num">Value</th>
+                  {isAdmin && <th className="qc-num">TRM</th>}
                   <th>Saved</th>
                 </tr>
               </thead>
               <tbody>
                 {rows.map((row) => {
                   const input = JSON.parse(row.input_json) as QuoteInput;
-                  const result = JSON.parse(row.result_json) as QuoteResult;
                   const snapshot = JSON.parse(row.snapshot_json) as ReferenceData;
-                  const destination = snapshot.destinations.find(
-                    (d) => d.key === input.destinationKey,
-                  );
-                  const price = row.chosen_price_usd_per_lb;
+                  const shipments = row.shipments_json
+                    ? (JSON.parse(row.shipments_json) as Shipment[])
+                    : null;
+                  const parsed = JSON.parse(row.result_json) as QuoteResult | ContractResult;
+                  const isContract = shipments !== null;
+                  const destination = snapshot.destinations.find((d) => d.key === input.destinationKey);
+                  const totalLbs = 'totalLbs' in parsed ? parsed.totalLbs : 0;
+                  const cost = isContract
+                    ? (parsed as ContractResult).weightedCostUsdPerLb
+                    : (parsed as QuoteResult).totalCostUsdPerLb;
+                  const value = isContract
+                    ? (parsed as ContractResult).totalValueUsd
+                    : (row.chosen_price_usd_per_lb ?? 0) * totalLbs;
+                  const displayPrice = destination && row.chosen_price_usd_per_lb !== null
+                    ? (row.chosen_price_usd_per_lb *
+                        (destination.quoteUnit === 'lb' ? 1 : destination.quoteUnit === 'kg' ? 2.2046226218487757 : 2204.6226218487757)) /
+                      snapshot.fx[destination.quoteCurrency]
+                    : null;
                   return (
                     <tr key={row.id}>
-                      <td className="font-semibold">{row.reference}</td>
+                      <td>
+                        <span className="qc-ref">{row.reference}</span>
+                        {isContract && <span className="qc-tagline multi" style={{ marginLeft: 6 }}>{shipments.length} shipments</span>}
+                        {row.waived_fixed_cost === 1 && <span className="qc-tagline waived" style={{ marginLeft: 6 }}>Waived</span>}
+                      </td>
                       <td>{row.client_name || '—'}</td>
-                      <td>{monthKeyLabel(input.kcMonth)}</td>
+                      <td>
+                        {row.from_month && row.to_month
+                          ? `${monthLabel(row.from_month)} – ${monthLabel(row.to_month)}`
+                          : '—'}
+                      </td>
                       <td>{destination?.label ?? input.destinationKey}</td>
                       <td>
-                        {input.incoterm} · {input.processKey} · {input.packagingKey}
+                        {input.incoterm} · {input.processKey} · {row.hold_months ?? '—'} mo
                       </td>
-                      <td className="num tnum">{plain(result.totalLbs, 0)} lb</td>
-                      <td className="num tnum">{cents(input.kcPriceUsdPerLb)}</td>
-                      <td className="num tnum">{cents(result.totalCostUsdPerLb)}</td>
-                      <td className="num tnum">
-                        {row.chosen_margin === null ? '—' : percent(row.chosen_margin, 1)}
-                      </td>
-                      <td className="num tnum font-semibold">
-                        {price === null || !destination
+                      <td className="qc-num">{plain(totalLbs, 0)} lb</td>
+                      <td className="qc-num">{cents(input.kcUsdPerLb)}</td>
+                      {isAdmin && <td className="qc-num">{cents(cost)}</td>}
+                      {isAdmin && (
+                        <td className="qc-num">
+                          {row.chosen_margin === null ? '—' : percent(row.chosen_margin, 1)}
+                        </td>
+                      )}
+                      <td className="qc-num qc-price-cell">
+                        {displayPrice === null || !destination
                           ? '—'
-                          : unitPrice(
-                              destination.quoteUnit === 'lb'
-                                ? price
-                                : (price * 2.2046226218487757) /
-                                  snapshot.fx[destination.quoteCurrency],
-                              destination.quoteCurrency,
-                              destination.quoteUnit,
-                            )}
+                          : `${money(displayPrice, destination.quoteCurrency, PRICE_DP)}/${UNIT_LABEL[destination.quoteUnit]}`}
                       </td>
-                      <td className="num tnum">
-                        {price === null ? '—' : money(price * result.totalLbs, 'USD', 0)}
+                      <td className="qc-num">
+                        {destination
+                          ? money(totalInQuoteCurrency(value, destination.quoteCurrency, snapshot.fx), destination.quoteCurrency, 0)
+                          : money(value, 'USD', 0)}
                       </td>
-                      <td className="num tnum">{plain(usdPerCopToTrm(snapshot.fx.COP), 0)}</td>
-                      <td style={{ color: 'var(--text-muted)' }}>
+                      {isAdmin && <td className="qc-num">{plain(usdPerCopToTrm(snapshot.fx.COP), 0)}</td>}
+                      <td style={{ color: 'var(--fc-ink-500)' }}>
                         {shortDate(row.created_at)}
                         {row.created_by ? ` · ${row.created_by}` : ''}
                       </td>
@@ -116,8 +135,8 @@ export default function QuotesPage() {
               </tbody>
             </table>
           </div>
-        </section>
-      )}
-    </div>
+        )}
+      </section>
+    </>
   );
 }

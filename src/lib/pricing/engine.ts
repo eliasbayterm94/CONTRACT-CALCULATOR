@@ -1,4 +1,5 @@
 import type {
+  ContractResult,
   CostLine,
   CostLineResult,
   Destination,
@@ -8,23 +9,31 @@ import type {
   ProcessType,
   QuoteInput,
   QuoteResult,
+  QuoteWarning,
   ReferenceData,
+  Shipment,
+  ShipmentResult,
 } from './types';
-import { toQuoteUnit, toUsd } from './units';
+import {
+  DEFAULT_LBS_PER_CONTAINER,
+  ceilPrice,
+  fromQuoteUnit,
+  toQuoteUnit,
+  toUsd,
+} from './units';
+import { monthSpan } from './schedule';
 
 /**
  * Price for a given margin.
  *
- * `cost` is the full break-even (green coffee + every cost line). `base` is the
- * slice of that cost the margin percentage is charged against — normally the
- * whole thing, but the admin module can narrow it to the logistics differential
- * or exclude lines flagged as margin.
+ * `cost` is the full break-even. `base` is the slice of it the margin is
+ * charged against — normally the whole thing, but admin can narrow it to the
+ * logistics differential or exclude lines flagged as margin.
  *
  *  - `on_cost` : markup. price = cost + m * base
- *  - `on_price`: gross margin. The base is grossed up so that margin is `m` of
- *                the grossed-up portion; anything outside the base passes
- *                through at cost. With base === cost this is the familiar
- *                price = cost / (1 - m).
+ *  - `on_price`: gross margin. The base is grossed up so margin is `m` of the
+ *                grossed-up portion; anything outside it passes through at
+ *                cost. With base === cost this is the familiar cost / (1 - m).
  */
 export function priceAtMargin(
   margin: number,
@@ -51,26 +60,17 @@ export function marginAtPrice(
   return 1 - base / grossed;
 }
 
-/** Build the ladder of margin steps, always including the floor. */
-function buildLadder(settings: EngineSettings): number[] {
-  const { ladderFrom, ladderTo, ladderStep, minMargin } = settings;
-  const steps: number[] = [];
-  if (ladderStep > 0) {
-    // Work in basis points so 0.02 steps don't drift on floating point.
-    const from = Math.round(ladderFrom * 10000);
-    const to = Math.round(ladderTo * 10000);
-    const step = Math.round(ladderStep * 10000);
-    for (let bp = from; bp <= to + 1; bp += step) steps.push(bp / 10000);
-  }
-  if (!steps.some((m) => Math.abs(m - minMargin) < 1e-9)) steps.unshift(minMargin);
-  return steps.sort((a, b) => a - b);
+/** Months of storage and finance actually billed, after the free window. */
+export function billableMonths(holdMonths: number, freeHoldMonths: number): number {
+  return Math.max(0, holdMonths - freeHoldMonths);
 }
 
-function need<T extends { key: string; active?: boolean }>(
-  list: T[],
-  key: string,
-  what: string,
-): T {
+/** The hold can never exceed the contract's own shipment window. */
+export function cappedHold(holdMonths: number, fromMonth: string, toMonth: string): number {
+  return Math.max(1, Math.min(holdMonths, monthSpan(fromMonth, toMonth), 12));
+}
+
+function need<T extends { key: string }>(list: T[], key: string, what: string): T {
   const found = list.find((x) => x.key === key);
   if (!found) throw new Error(`Unknown ${what}: "${key}"`);
   return found;
@@ -79,13 +79,13 @@ function need<T extends { key: string; active?: boolean }>(
 interface ResolvedAmount {
   amount: number;
   currency: CostLine['currency'];
-  lbsPerUnit: number;
+  lbs: number;
 }
 
 /**
  * Look up a cost line's amount. Lines driven by a quote selection read their
- * value from the packaging / process / destination tables instead of carrying
- * a fixed amount of their own.
+ * value from the packaging, process or destination tables rather than carrying
+ * an amount of their own.
  */
 function resolveAmount(
   line: CostLine,
@@ -95,33 +95,29 @@ function resolveAmount(
 ): ResolvedAmount {
   switch (line.driver) {
     case 'packaging':
-      return {
-        amount: packaging.amount,
-        currency: packaging.currency,
-        lbsPerUnit: packaging.lbsPerUnit,
-      };
+      return { amount: packaging.amount, currency: packaging.currency, lbs: packaging.lbsPerUnit };
     case 'process':
-      return { amount: process.amount, currency: process.currency, lbsPerUnit: process.lbsPerUnit };
+      return { amount: process.amount, currency: process.currency, lbs: process.lbsPerUnit };
     case 'destination': {
       if (line.key === 'seafreight') {
         return {
           amount: destination.seafreightAmount,
           currency: destination.seafreightCurrency,
-          lbsPerUnit: destination.seafreightLbsPerUnit,
+          lbs: destination.seafreightLbsPerUnit,
         };
       }
       if (line.key === 'import_cost') {
         return {
           amount: destination.importAmount,
           currency: destination.importCurrency,
-          lbsPerUnit: destination.importLbsPerUnit,
+          lbs: destination.importLbsPerUnit,
         };
       }
       if (line.key === 'unloading_ddp') {
         return {
           amount: destination.unloadingAmount,
           currency: destination.unloadingCurrency,
-          lbsPerUnit: destination.unloadingLbsPerUnit,
+          lbs: destination.unloadingLbsPerUnit,
         };
       }
       if (line.key === 'storage') {
@@ -130,14 +126,14 @@ function resolveAmount(
         return {
           amount: destination.storageAmount,
           currency: destination.storageCurrency,
-          lbsPerUnit: packaging.lbsPerUnit,
+          lbs: packaging.lbsPerUnit,
         };
       }
       throw new Error(`Cost line "${line.key}" is destination-driven but has no lookup`);
     }
     case 'fixed':
     default:
-      return { amount: line.amount, currency: line.currency, lbsPerUnit: line.lbsPerUnit };
+      return { amount: line.amount, currency: line.currency, lbs: line.lbsPerUnit };
   }
 }
 
@@ -146,28 +142,27 @@ export function calculateQuote(input: QuoteInput, ref: ReferenceData): QuoteResu
   const destination = need(ref.destinations, input.destinationKey, 'destination');
   const process = need(ref.processes, input.processKey, 'process');
   const packaging = need(ref.packaging, input.packagingKey, 'packaging type');
-  const warnings: string[] = [];
+  const warnings: QuoteWarning[] = [];
 
-  // ---- quantity -----------------------------------------------------------
-  const lbsPerContainer = input.lbsPerContainer > 0 ? input.lbsPerContainer : 38580.5;
-  const totalLbs =
-    input.quantityMode === 'containers'
-      ? input.quantity * lbsPerContainer
-      : input.quantityMode === 'bags'
-        ? input.quantity * packaging.lbsPerUnit
-        : input.quantity;
-  const containers = totalLbs / lbsPerContainer;
-  const bags = totalLbs / packaging.lbsPerUnit;
+  const hold = cappedHold(input.holdMonths, input.fromMonth, input.toMonth);
+  const months = billableMonths(hold, settings.freeHoldMonths);
 
-  if (totalLbs <= 0) warnings.push('Quantity is zero — totals will be zero.');
-  if (Math.abs(containers - Math.round(containers)) > 0.001) {
-    warnings.push(
-      `${containers.toFixed(2)} containers is not a whole load. Per-pound freight, port and ` +
-        `transport costs assume full containers, so a partial load will be understated.`,
-    );
+  const totalLbs = input.bags * packaging.lbsPerUnit;
+  const containers = totalLbs / DEFAULT_LBS_PER_CONTAINER;
+
+  if (input.bags > 0 && Math.abs(containers - Math.round(containers)) > 0.005) {
+    warnings.push({
+      text:
+        `${input.bags} bags is ${containers.toFixed(2)} containers. Freight, port and inland ` +
+        `transport assume full loads, so a part load understates them.`,
+      adminOnly: false,
+    });
   }
   if (!destination.allowedIncoterms.includes(input.incoterm)) {
-    warnings.push(`${input.incoterm} is not configured as an allowed incoterm for ${destination.label}.`);
+    warnings.push({
+      text: `${input.incoterm} is not configured as an allowed incoterm for ${destination.label}.`,
+      adminOnly: true,
+    });
   }
 
   // ---- per-line costs -----------------------------------------------------
@@ -175,45 +170,36 @@ export function calculateQuote(input: QuoteInput, ref: ReferenceData): QuoteResu
   let differentialUsdPerLb = 0;
   let storageUsdPerLb = 0;
   let copExposureUsdPerLb = 0;
-  let financeLineIndex = -1;
+  let financeIndex = -1;
+  let waivedFixedCost = false;
 
-  const ordered = [...ref.costLines].sort((a, b) => a.sortOrder - b.sortOrder);
-
-  for (const line of ordered) {
+  for (const line of [...ref.costLines].sort((a, b) => a.sortOrder - b.sortOrder)) {
     let included = true;
     let excludedReason: string | undefined;
 
     if (!line.active) {
       included = false;
       excludedReason = 'Disabled in admin';
+    } else if (line.waivable && input.waiveFixedCost) {
+      included = false;
+      excludedReason = 'Waived — strategic deal';
+      waivedFixedCost = true;
     } else if (line.group === 'freight' && input.incoterm === 'FOB') {
       included = false;
       excludedReason = 'FOB — buyer pays ocean freight';
     } else if (line.group === 'import' && input.incoterm !== 'DDP') {
       included = false;
       excludedReason = `${input.incoterm} — buyer clears import`;
-    } else if (line.group === 'optional') {
-      const on =
-        input.enabledLines.includes(line.key) ||
-        (line.defaultOn && !input.disabledLines.includes(line.key));
-      if (!on) {
+    } else if (line.group === 'hold') {
+      // Carrying cost only lands on us under DDP. On FOB and CIF the buyer owns
+      // the coffee from the port onward and carries it themselves.
+      if (input.incoterm !== 'DDP') {
         included = false;
-        excludedReason = 'Not enabled on this quote';
+        excludedReason = `${input.incoterm} — the buyer carries the coffee`;
+      } else if (months <= 0) {
+        included = false;
+        excludedReason = `Covered by fixed cost up to ${settings.freeHoldMonths} months`;
       }
-    } else if (line.optional && input.disabledLines.includes(line.key)) {
-      included = false;
-      excludedReason = 'Switched off on this quote';
-    }
-
-    const months =
-      line.key === 'storage'
-        ? input.storageMonths
-        : line.key === 'finance'
-          ? input.financeMonths
-          : 0;
-    if (included && line.perMonth && months <= 0) {
-      included = false;
-      excludedReason = 'Zero months';
     }
 
     // Finance is a rate on the cargo value, so it can only be priced once the
@@ -231,7 +217,7 @@ export function calculateQuote(input: QuoteInput, ref: ReferenceData): QuoteResu
         included,
         excludedReason,
       });
-      if (included) financeLineIndex = lines.length - 1;
+      if (included) financeIndex = lines.length - 1;
       continue;
     }
 
@@ -239,8 +225,8 @@ export function calculateQuote(input: QuoteInput, ref: ReferenceData): QuoteResu
     const perUnit =
       line.basis === 'per_lb'
         ? resolved.amount
-        : resolved.lbsPerUnit > 0
-          ? resolved.amount / resolved.lbsPerUnit
+        : resolved.lbs > 0
+          ? resolved.amount / resolved.lbs
           : 0;
     const nativePerLb = perUnit * (line.perMonth ? months : 1);
     const usdPerLb = included ? toUsd(nativePerLb, resolved.currency, fx) : 0;
@@ -249,12 +235,18 @@ export function calculateQuote(input: QuoteInput, ref: ReferenceData): QuoteResu
       differentialUsdPerLb += usdPerLb;
       if (line.key === 'storage') storageUsdPerLb += usdPerLb;
       if (resolved.currency === 'COP') copExposureUsdPerLb += usdPerLb;
-    }
-    if (included && line.basis === 'per_unit' && resolved.lbsPerUnit <= 0) {
-      warnings.push(`${line.label} has no pounds-per-unit configured and was priced at zero.`);
-    }
-    if (included && resolved.amount === 0) {
-      warnings.push(`${line.label} is configured at zero for ${destination.label}.`);
+      if (resolved.amount === 0) {
+        warnings.push({
+          text: `${line.label} is configured at zero for ${destination.label}.`,
+          adminOnly: true,
+        });
+      }
+      if (line.basis === 'per_unit' && resolved.lbs <= 0) {
+        warnings.push({
+          text: `${line.label} has no pounds-per-unit configured and was priced at zero.`,
+          adminOnly: true,
+        });
+      }
     }
 
     lines.push({
@@ -272,17 +264,19 @@ export function calculateQuote(input: QuoteInput, ref: ReferenceData): QuoteResu
   }
 
   // ---- green coffee + finance --------------------------------------------
-  const greenCoffeeUsdPerLb = input.kcPriceUsdPerLb + input.premiumUsdPerLb;
-  if (input.kcPriceUsdPerLb <= 0) warnings.push('No KC price entered for this month.');
-  if (input.premiumUsdPerLb === 0) warnings.push('No quality premium set for this month.');
+  const greenCoffeeUsdPerLb = input.kcUsdPerLb + input.premiumUsdPerLb;
+  if (input.kcUsdPerLb <= 0) warnings.push({ text: 'No KC price entered.', adminOnly: false });
+  if (input.premiumUsdPerLb === 0) {
+    warnings.push({ text: 'No quality premium set for this quote.', adminOnly: true });
+  }
 
   // Finance is charged on the full cargo value — the coffee plus everything
-  // spent getting it to the client — not just the logistics differential.
-  const financeBase = greenCoffeeUsdPerLb + differentialUsdPerLb;
+  // spent getting it there — not just the logistics differential.
   let financeUsdPerLb = 0;
-  if (financeLineIndex >= 0) {
-    financeUsdPerLb = settings.financeMonthlyRate * input.financeMonths * financeBase;
-    lines[financeLineIndex].usdPerLb = financeUsdPerLb;
+  if (financeIndex >= 0) {
+    financeUsdPerLb =
+      settings.financeMonthlyRate * months * (greenCoffeeUsdPerLb + differentialUsdPerLb);
+    lines[financeIndex].usdPerLb = financeUsdPerLb;
   }
 
   const totalCostUsdPerLb = greenCoffeeUsdPerLb + differentialUsdPerLb + financeUsdPerLb;
@@ -297,26 +291,33 @@ export function calculateQuote(input: QuoteInput, ref: ReferenceData): QuoteResu
       : differentialUsdPerLb + financeUsdPerLb;
   const marginBaseUsdPerLb = Math.max(0, rawBase - marginExcluded);
 
+  // Round first, then derive. The client multiplies the quoted price by the
+  // quantity, so contract value and margin have to come from the rounded
+  // number rather than the raw one.
   const rung = (margin: number): MarginRung => {
-    const priceUsdPerLb = priceAtMargin(
-      margin,
-      totalCostUsdPerLb,
-      marginBaseUsdPerLb,
-      settings.marginMode,
+    const raw = priceAtMargin(margin, totalCostUsdPerLb, marginBaseUsdPerLb, settings.marginMode);
+    const displayPrice = ceilPrice(
+      toQuoteUnit(raw, destination.quoteCurrency, destination.quoteUnit, fx),
+    );
+    const priceUsdPerLb = fromQuoteUnit(
+      displayPrice,
+      destination.quoteCurrency,
+      destination.quoteUnit,
+      fx,
     );
     return {
       margin,
       priceUsdPerLb,
+      displayPrice,
       marginUsdPerLb: priceUsdPerLb - totalCostUsdPerLb,
       totalValueUsd: priceUsdPerLb * totalLbs,
-      displayPrice: toQuoteUnit(
-        priceUsdPerLb,
-        destination.quoteCurrency,
-        destination.quoteUnit,
-        fx,
-      ),
     };
   };
+
+  const ladderMargins = [...settings.ladder].sort((a, b) => a - b);
+  if (!ladderMargins.some((m) => Math.abs(m - settings.minMargin) < 1e-9)) {
+    ladderMargins.unshift(settings.minMargin);
+  }
 
   return {
     lines,
@@ -327,20 +328,50 @@ export function calculateQuote(input: QuoteInput, ref: ReferenceData): QuoteResu
     totalCostUsdPerLb,
     marginBaseUsdPerLb,
     totalLbs,
+    bags: input.bags,
     containers,
-    bags,
-    floor: rung(settings.minMargin),
-    ladder: buildLadder(settings).map(rung),
+    billableMonths: months,
+    waivedFixedCost,
+    copExposureUsdPerLb,
     quoteCurrency: destination.quoteCurrency,
     quoteUnit: destination.quoteUnit,
-    copExposureUsdPerLb,
+    floor: rung(settings.minMargin),
+    ladder: ladderMargins.map(rung),
     warnings,
+  };
+}
+
+/** Price a quote at an arbitrary margin, outside the published ladder. */
+export function rungAt(margin: number, input: QuoteInput, ref: ReferenceData): MarginRung {
+  const result = calculateQuote(input, ref);
+  const raw = priceAtMargin(
+    margin,
+    result.totalCostUsdPerLb,
+    result.marginBaseUsdPerLb,
+    ref.settings.marginMode,
+  );
+  const destination = need(ref.destinations, input.destinationKey, 'destination');
+  const displayPrice = ceilPrice(
+    toQuoteUnit(raw, destination.quoteCurrency, destination.quoteUnit, ref.fx),
+  );
+  const priceUsdPerLb = fromQuoteUnit(
+    displayPrice,
+    destination.quoteCurrency,
+    destination.quoteUnit,
+    ref.fx,
+  );
+  return {
+    margin,
+    priceUsdPerLb,
+    displayPrice,
+    marginUsdPerLb: priceUsdPerLb - result.totalCostUsdPerLb,
+    totalValueUsd: priceUsdPerLb * result.totalLbs,
   };
 }
 
 /**
  * Reverse solve: the trader names a target selling price and we report the
- * margin it implies, plus whether that clears the configured floor.
+ * margin it implies, plus whether it clears the floor.
  */
 export function solveForPrice(
   targetUsdPerLb: number,
@@ -361,23 +392,125 @@ export function solveForPrice(
   };
 }
 
-/** Forward solve: the trader names a margin and we report the price. */
-export function solveForMargin(
+/**
+ * What KC would have to be for a named price to carry a named margin.
+ *
+ * Price is affine in the KC leg — the finance line scales it, nothing bends it
+ * — so two evaluations pin the line exactly, whatever the margin mode or base
+ * is set to. No iteration, and it stays correct if the policy changes.
+ *
+ * Returns null when the price does not respond to KC at all.
+ */
+export function kcForTarget(
+  targetUsdPerLb: number,
   margin: number,
-  result: QuoteResult,
-  settings: EngineSettings,
-): MarginRung {
-  const priceUsdPerLb = priceAtMargin(
+  input: QuoteInput,
+  ref: ReferenceData,
+): number | null {
+  const priceAt = (kcUsdPerLb: number) => {
+    const r = calculateQuote({ ...input, kcUsdPerLb }, ref);
+    return priceAtMargin(margin, r.totalCostUsdPerLb, r.marginBaseUsdPerLb, ref.settings.marginMode);
+  };
+  const atZero = priceAt(0);
+  const slope = priceAt(1) - atZero;
+  if (!Number.isFinite(slope) || Math.abs(slope) < 1e-9) return null;
+  return (targetUsdPerLb - atZero) / slope;
+}
+
+/**
+ * A contract shipped across several months, each against its own KC.
+ *
+ * Because `priceAtMargin` is affine in cost and base, the volume-weighted price
+ * equals the price computed from the volume-weighted cost — so the blended
+ * figure and its reverse solve use exactly the same functions as a single
+ * quote, rather than a parallel code path that could drift.
+ */
+export function calculateContract(
+  shipments: Shipment[],
+  base: Omit<QuoteInput, 'bags' | 'kcUsdPerLb'>,
+  margin: number,
+  ref: ReferenceData,
+): ContractResult {
+  const destination = need(ref.destinations, base.destinationKey, 'destination');
+  const warnings: QuoteWarning[] = [];
+
+  const priced: ShipmentResult[] = shipments.map((s) => {
+    const result = calculateQuote(
+      { ...base, bags: s.bags, kcUsdPerLb: s.kcCents / 100 },
+      ref,
+    );
+    const raw = priceAtMargin(
+      margin,
+      result.totalCostUsdPerLb,
+      result.marginBaseUsdPerLb,
+      ref.settings.marginMode,
+    );
+    const displayPrice = ceilPrice(
+      toQuoteUnit(raw, destination.quoteCurrency, destination.quoteUnit, ref.fx),
+    );
+    const priceUsdPerLb = fromQuoteUnit(
+      displayPrice,
+      destination.quoteCurrency,
+      destination.quoteUnit,
+      ref.fx,
+    );
+    return {
+      ...s,
+      result,
+      priceUsdPerLb,
+      displayPrice,
+      valueUsd: priceUsdPerLb * result.totalLbs,
+    };
+  });
+
+  const totalLbs = priced.reduce((sum, x) => sum + x.result.totalLbs, 0);
+  const totalBags = priced.reduce((sum, x) => sum + x.bags, 0);
+  const weight = (pick: (x: ShipmentResult) => number) =>
+    totalLbs > 0 ? priced.reduce((sum, x) => sum + pick(x) * x.result.totalLbs, 0) / totalLbs : 0;
+
+  const weightedCostUsdPerLb = weight((x) => x.result.totalCostUsdPerLb);
+  const weightedMarginBaseUsdPerLb = weight((x) => x.result.marginBaseUsdPerLb);
+  const weightedKcUsdPerLb = weight((x) => x.kcCents / 100);
+
+  const blendedRaw = priceAtMargin(
     margin,
-    result.totalCostUsdPerLb,
-    result.marginBaseUsdPerLb,
-    settings.marginMode,
+    weightedCostUsdPerLb,
+    weightedMarginBaseUsdPerLb,
+    ref.settings.marginMode,
   );
+  const consolidatedDisplay = ceilPrice(
+    toQuoteUnit(blendedRaw, destination.quoteCurrency, destination.quoteUnit, ref.fx),
+  );
+  const consolidatedUsdPerLb = fromQuoteUnit(
+    consolidatedDisplay,
+    destination.quoteCurrency,
+    destination.quoteUnit,
+    ref.fx,
+  );
+
+  if (priced.some((x) => x.bags <= 0)) {
+    warnings.push({ text: 'A shipment has no bags — it adds nothing to the blend.', adminOnly: false });
+  }
+  if (priced.some((x) => x.kcCents <= 0)) {
+    warnings.push({ text: 'A shipment has no KC price entered.', adminOnly: false });
+  }
+
   return {
+    shipments: priced,
     margin,
-    priceUsdPerLb,
-    marginUsdPerLb: priceUsdPerLb - result.totalCostUsdPerLb,
-    totalValueUsd: priceUsdPerLb * result.totalLbs,
-    displayPrice: priceUsdPerLb,
+    totalLbs,
+    totalBags,
+    weightedCostUsdPerLb,
+    weightedMarginBaseUsdPerLb,
+    weightedKcUsdPerLb,
+    consolidatedUsdPerLb,
+    consolidatedDisplay,
+    // The contract is the sum of its shipment lines — that is the figure a
+    // client gets by adding the quote up. The blended price is a summary on
+    // top of it, rounded on its own.
+    totalValueUsd: priced.reduce((sum, x) => sum + x.valueUsd, 0),
+    quoteCurrency: destination.quoteCurrency,
+    quoteUnit: destination.quoteUnit,
+    warnings,
   };
 }

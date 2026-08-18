@@ -1,9 +1,9 @@
 /**
  * Domain types for the Forest Coffee contract quote engine.
  *
- * Everything in the engine normalises to USD per pound (USD/lb), which is the
- * unit the Coffee "C" (KC) futures contract trades in. Display conversion to
- * other units/currencies happens at the very edge, in `units.ts`.
+ * Everything normalises to USD per pound — the unit the Coffee "C" (KC) futures
+ * contract trades in. Conversion to the unit and currency a client is actually
+ * quoted in happens at the edge, in `units.ts`.
  */
 
 export type CurrencyCode = 'USD' | 'COP' | 'EUR' | 'AUD' | 'GBP' | 'CAD';
@@ -16,36 +16,34 @@ export type Incoterm = 'FOB' | 'CIF' | 'DDP';
 export const INCOTERMS: Incoterm[] = ['FOB', 'CIF', 'DDP'];
 
 /**
- * Which incoterm tier a cost line first appears at.
+ * Which stage of the journey a cost line belongs to.
  *  - `fob`     : always included
- *  - `freight` : included from CIF up (ocean freight)
- *  - `import`  : included from DDP up (import clearance, unloading)
- *  - `optional`: only when the trader switches it on (storage, finance)
+ *  - `freight` : from CIF up — ocean freight
+ *  - `import`  : DDP only — import clearance and unloading
+ *  - `hold`    : DDP only — storage and finance while we carry the coffee
  */
-export type CostGroup = 'fob' | 'freight' | 'import' | 'optional';
+export type CostGroup = 'fob' | 'freight' | 'import' | 'hold';
+
+export const COST_GROUP_LABEL: Record<CostGroup, string> = {
+  fob: 'Origin & FOB',
+  freight: 'Ocean freight',
+  import: 'Destination',
+  hold: 'Holding the contract',
+};
 
 /**
- * How a cost line's raw amount converts to a per-pound figure.
- *  - `per_lb`  : amount is already per pound
- *  - `per_unit`: amount covers `lbsPerUnit` pounds (a bag, a container, a truck)
- *  - `rate`    : amount is a monthly rate applied to a value base (finance)
+ * How a cost line's raw amount becomes a per-pound figure.
+ *  - `per_lb`  : already per pound
+ *  - `per_unit`: covers `lbsPerUnit` pounds — a bag, a container, a truck
+ *  - `rate`    : a monthly rate applied to the cargo value (finance)
  */
 export type CostBasis = 'per_lb' | 'per_unit' | 'rate';
 
-/**
- * What a cost line's amount is keyed on. Lines that vary by a quote selection
- * look their amount up from a table instead of carrying a single fixed value.
- */
-export type CostDriver =
-  | 'fixed'        // one amount, always
-  | 'packaging'    // varies by packaging type (70 / 35 / 24 kg)
-  | 'process'      // varies by milling type (washed / honey / natural)
-  | 'destination'; // varies by destination (seafreight, import, unloading, storage)
+/** What a line's amount is keyed on. */
+export type CostDriver = 'fixed' | 'packaging' | 'process' | 'destination';
 
 export interface CostLine {
-  /** Stable machine key, e.g. `milling`. */
   key: string;
-  /** Human label shown on the quote breakdown. */
   label: string;
   group: CostGroup;
   basis: CostBasis;
@@ -55,87 +53,72 @@ export interface CostLine {
   amount: number;
   /** Pounds covered by one `amount` when `basis === 'per_unit'`. */
   lbsPerUnit: number;
-  /** Multiplied by the number of months the line is carried (storage, finance). */
+  /** Multiplied by the months the line is carried (storage, finance). */
   perMonth: boolean;
-  /** Trader can switch this line off on an individual quote. */
-  optional: boolean;
-  /** Off unless explicitly enabled (storage, finance). */
-  defaultOn: boolean;
   /**
-   * When true this line is treated as margin rather than cost: it is excluded
-   * from the cost base the margin percentage is calculated against, so the
-   * quote does not earn margin on its own margin.
+   * Treated as margin rather than cost: still recovered in the price, but kept
+   * out of the base the margin percentage is charged against.
    */
   isMargin: boolean;
+  /** Admin can waive this line on a strategic deal. */
+  waivable: boolean;
   sortOrder: number;
   active: boolean;
 }
 
-/** A packaging option: bag size, its cost, and the pounds it holds. */
 export interface PackagingType {
   key: string;
   label: string;
   kgPerUnit: number;
   lbsPerUnit: number;
-  /** Cost of one unit of packaging. */
   amount: number;
   currency: CurrencyCode;
+  /** The one packaging traders may quote. Admin can use any active type. */
+  traderDefault: boolean;
   active: boolean;
 }
 
-/** A milling / process option and what milling that process costs. */
 export interface ProcessType {
   key: string;
   label: string;
   amount: number;
-  /** Pounds covered by one `amount` of milling cost. */
   lbsPerUnit: number;
   currency: CurrencyCode;
   active: boolean;
 }
 
+export type QuoteUnit = 'lb' | 'kg' | 'mt';
+
 export interface Destination {
   key: string;
   label: string;
-  /** Currency this destination's clients are quoted in. */
   quoteCurrency: CurrencyCode;
-  /** `lb` for US destinations, `kg` for everyone else. */
   quoteUnit: QuoteUnit;
-  /** Ocean freight for one container. */
   seafreightAmount: number;
   seafreightCurrency: CurrencyCode;
   seafreightLbsPerUnit: number;
-  /** Import clearance for one container. */
   importAmount: number;
   importCurrency: CurrencyCode;
   importLbsPerUnit: number;
-  /** Unloading, DDP only. */
   unloadingAmount: number;
   unloadingCurrency: CurrencyCode;
   unloadingLbsPerUnit: number;
-  /** Warehouse storage, charged per packaging unit per month. */
+  /** Warehouse storage, per packaging unit per month. */
   storageAmount: number;
   storageCurrency: CurrencyCode;
-  /** Incoterms that are legal for this destination. */
   allowedIncoterms: Incoterm[];
   active: boolean;
 }
 
-export type QuoteUnit = 'lb' | 'kg' | 'mt';
-
 /** How the margin percentage is interpreted. */
 export type MarginMode =
-  /** margin is a share of the final selling price: price = cost / (1 - m) */
+  /** a share of the final selling price: price = cost / (1 - m) */
   | 'on_price'
-  /** margin is a markup on cost: price = cost * (1 + m) */
+  /** a markup on cost: price = cost * (1 + m) */
   | 'on_cost';
 
 /** What the margin percentage is charged against. */
-export type MarginBase =
-  /** green coffee + every cost line (default) */
-  | 'full_landed_cost'
-  /** the logistics/processing differential only, not the coffee itself */
-  | 'differential_only';
+export type MarginBase = 'full_landed_cost' | 'differential_only';
 
 /** FX expressed as US dollars per one unit of the currency. */
 export type FxTable = Record<CurrencyCode, number>;
@@ -143,14 +126,14 @@ export type FxTable = Record<CurrencyCode, number>;
 export interface EngineSettings {
   marginMode: MarginMode;
   marginBase: MarginBase;
-  /** Floor margin the engine always prices at, as a fraction (0.16 = 16%). */
+  /** Floor margin every quote is held to, as a fraction. */
   minMargin: number;
-  /** Inclusive bounds and step of the displayed margin ladder, as fractions. */
-  ladderFrom: number;
-  ladderTo: number;
-  ladderStep: number;
+  /** The rungs shown to traders, as fractions, in ascending order. */
+  ladder: number[];
   /** Monthly finance rate as a fraction (0.0072 = 0.72% per month). */
   financeMonthlyRate: number;
+  /** Months of carry the fixed cost already covers before storage and finance bill. */
+  freeHoldMonths: number;
 }
 
 export interface ReferenceData {
@@ -167,23 +150,19 @@ export interface QuoteInput {
   incoterm: Incoterm;
   processKey: string;
   packagingKey: string;
-  /** Number of containers, or a direct pound figure — see `quantityMode`. */
-  quantity: number;
-  quantityMode: 'containers' | 'bags' | 'lbs';
-  /** Pounds in one container. Configurable; 38,580.5 lb = 17.5 MT. */
-  lbsPerContainer: number;
-  /** KC contract month key, e.g. `2026H`. Informational for the engine. */
-  kcMonth: string;
-  /** KC price in USD/lb for that month (KC quotes in US cents; convert first). */
-  kcPriceUsdPerLb: number;
-  /** Quality differential over KC in USD/lb, from the monthly premium table. */
+  /** Quantity in bags. Pounds follow from the packaging type. */
+  bags: number;
+  /** KC price in USD/lb. KC quotes in US cents — convert first. */
+  kcUsdPerLb: number;
+  /** Quality differential over KC, USD/lb. */
   premiumUsdPerLb: number;
-  /** Cost line keys the trader has switched off. */
-  disabledLines: string[];
-  /** Cost line keys the trader has switched on (for `defaultOn: false` lines). */
-  enabledLines: string[];
-  storageMonths: number;
-  financeMonths: number;
+  /** Months the contract is held, 1-12. Capped by the shipment window. */
+  holdMonths: number;
+  /** First and last shipment month, `YYYY-MM`. */
+  fromMonth: string;
+  toMonth: string;
+  /** Admin override: quote without recovering the fixed cost. */
+  waiveFixedCost: boolean;
 }
 
 export interface CostLineResult {
@@ -193,26 +172,34 @@ export interface CostLineResult {
   currency: CurrencyCode;
   /** Raw amount in its native currency, before conversion. */
   nativeAmount: number;
-  /** Native currency per pound, before FX. Null for `rate` lines. */
+  /** Native currency per pound. Null for `rate` lines. */
   nativePerLb: number | null;
   usdPerLb: number;
   isMargin: boolean;
   included: boolean;
-  /** Why the line was excluded, for the breakdown UI. */
+  /** Why the line was left out, for the breakdown. */
   excludedReason?: string;
 }
 
 export interface MarginRung {
   margin: number;
+  /** USD/lb implied by the rounded client-facing price. */
   priceUsdPerLb: number;
+  /** The quoted price, in the client's unit and currency, rounded up. */
+  displayPrice: number;
   marginUsdPerLb: number;
   totalValueUsd: number;
-  displayPrice: number;
+}
+
+export interface QuoteWarning {
+  text: string;
+  /** A cost-table problem a trader can neither see nor fix. */
+  adminOnly: boolean;
 }
 
 export interface QuoteResult {
   lines: CostLineResult[];
-  /** Sum of every included cost line, USD/lb. Excludes finance. */
+  /** Every included cost line except finance, USD/lb. */
   differentialUsdPerLb: number;
   /** KC + quality premium, USD/lb. */
   greenCoffeeUsdPerLb: number;
@@ -220,17 +207,53 @@ export interface QuoteResult {
   storageUsdPerLb: number;
   /** Green coffee + differential + finance. The break-even. */
   totalCostUsdPerLb: number;
-  /** The base the margin percentage is applied to. */
   marginBaseUsdPerLb: number;
   totalLbs: number;
-  containers: number;
   bags: number;
-  /** Price at the configured floor margin. */
-  floor: MarginRung;
-  ladder: MarginRung[];
+  containers: number;
+  /** Months of storage and finance actually billed. */
+  billableMonths: number;
+  waivedFixedCost: boolean;
+  /** Share of the differential that is peso-denominated, i.e. TRM-exposed. */
+  copExposureUsdPerLb: number;
   quoteCurrency: CurrencyCode;
   quoteUnit: QuoteUnit;
-  /** Share of the differential that is COP-denominated, i.e. TRM-exposed. */
-  copExposureUsdPerLb: number;
-  warnings: string[];
+  floor: MarginRung;
+  ladder: MarginRung[];
+  warnings: QuoteWarning[];
+}
+
+/** One shipment inside a multi-shipment contract. */
+export interface Shipment {
+  id: string;
+  label: string;
+  /** KC for this shipment's month, in US cents/lb. */
+  kcCents: number;
+  bags: number;
+}
+
+export interface ShipmentResult extends Shipment {
+  result: QuoteResult;
+  priceUsdPerLb: number;
+  displayPrice: number;
+  valueUsd: number;
+}
+
+export interface ContractResult {
+  shipments: ShipmentResult[];
+  margin: number;
+  totalLbs: number;
+  totalBags: number;
+  /** Volume-weighted averages across the shipments. */
+  weightedCostUsdPerLb: number;
+  weightedMarginBaseUsdPerLb: number;
+  weightedKcUsdPerLb: number;
+  /** The single blended price quoted for the whole contract. */
+  consolidatedUsdPerLb: number;
+  consolidatedDisplay: number;
+  /** Sum of the shipment lines — what a client gets by adding the quote up. */
+  totalValueUsd: number;
+  quoteCurrency: CurrencyCode;
+  quoteUnit: QuoteUnit;
+  warnings: QuoteWarning[];
 }

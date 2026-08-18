@@ -2,7 +2,7 @@
   "name": "contract-calculator",
   "version": "1.0.0",
   "private": true,
-  "description": "Forest Coffee contract quote calculator — KC-linked differential pricing, multi-destination, multi-currency.",
+  "description": "Forest Coffee contract quote calculator \u2014 KC-linked differential pricing, multi-destination, multi-currency.",
   "scripts": {
     "dev": "next dev",
     "build": "next build",
@@ -20,12 +20,10 @@
     "zod": "^4.1.11"
   },
   "devDependencies": {
-    "@tailwindcss/postcss": "^4.1.13",
     "@types/better-sqlite3": "^7.6.12",
     "@types/node": "^22.18.6",
     "@types/react": "^19.1.13",
     "@types/react-dom": "^19.1.9",
-    "tailwindcss": "^4.1.13",
     "tsx": "^4.20.5",
     "typescript": "^5.9.2",
     "vitest": "^3.2.4"

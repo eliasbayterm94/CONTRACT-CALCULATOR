@@ -46,9 +46,8 @@ interface CostLineRow {
   amount: number;
   lbs_per_unit: number;
   per_month: number;
-  optional: number;
-  default_on: number;
   is_margin: number;
+  waivable: number;
   sort_order: number;
   active: number;
 }
@@ -64,9 +63,8 @@ function toCostLine(r: CostLineRow): CostLine {
     amount: r.amount,
     lbsPerUnit: r.lbs_per_unit,
     perMonth: !!r.per_month,
-    optional: !!r.optional,
-    defaultOn: !!r.default_on,
     isMargin: !!r.is_margin,
+    waivable: !!r.waivable,
     sortOrder: r.sort_order,
     active: !!r.active,
   };
@@ -132,6 +130,7 @@ interface PackagingRow {
   lbs_per_unit: number;
   amount: number;
   currency: string;
+  trader_default: number;
   active: number;
 }
 
@@ -157,6 +156,7 @@ export function getPackaging(includeInactive = false): PackagingType[] {
     lbsPerUnit: r.lbs_per_unit,
     amount: r.amount,
     currency: r.currency as CurrencyCode,
+    traderDefault: !!r.trader_default,
     active: !!r.active,
   }));
 }
@@ -246,10 +246,9 @@ export function getEngineSettings(): EngineSettings {
     marginMode: getSetting('marginMode', SEED_SETTINGS.marginMode),
     marginBase: getSetting('marginBase', SEED_SETTINGS.marginBase),
     minMargin: getSetting('minMargin', SEED_SETTINGS.minMargin),
-    ladderFrom: getSetting('ladderFrom', SEED_SETTINGS.ladderFrom),
-    ladderTo: getSetting('ladderTo', SEED_SETTINGS.ladderTo),
-    ladderStep: getSetting('ladderStep', SEED_SETTINGS.ladderStep),
+    ladder: getSetting('ladder', SEED_SETTINGS.ladder),
     financeMonthlyRate: getSetting('financeMonthlyRate', SEED_SETTINGS.financeMonthlyRate),
+    freeHoldMonths: getSetting('freeHoldMonths', SEED_SETTINGS.freeHoldMonths),
   };
 }
 
@@ -371,4 +370,40 @@ export function getAuditLog(limit = 100): AuditRow[] {
     .prepare('SELECT * FROM audit_log ORDER BY id DESC LIMIT ?')
     .all(limit) as Array<Omit<AuditRow, 'entityId'> & { entity_id: string | null }>;
   return rows.map((r) => ({ ...r, entityId: r.entity_id }));
+}
+
+/* ------------------------------------------------------------- KC spot -- */
+
+export interface KcSpot {
+  priceCents: number;
+  asOf: string;
+  source: string;
+  fetchedAt: string;
+}
+
+export function getKcSpot(): KcSpot | null {
+  const row = getDb().prepare('SELECT * FROM kc_spot WHERE id = 1').get() as
+    | { price_cents: number; as_of: string; source: string; fetched_at: string }
+    | undefined;
+  if (!row) return null;
+  return {
+    priceCents: row.price_cents,
+    asOf: row.as_of,
+    source: row.source,
+    fetchedAt: row.fetched_at,
+  };
+}
+
+export function setKcSpot(priceCents: number, asOf: string, source: string): void {
+  getDb()
+    .prepare(
+      `INSERT INTO kc_spot (id, price_cents, as_of, source, fetched_at)
+       VALUES (1, ?, ?, ?, datetime('now'))
+       ON CONFLICT(id) DO UPDATE SET
+         price_cents = excluded.price_cents,
+         as_of       = excluded.as_of,
+         source      = excluded.source,
+         fetched_at  = excluded.fetched_at`,
+    )
+    .run(priceCents, asOf, source);
 }

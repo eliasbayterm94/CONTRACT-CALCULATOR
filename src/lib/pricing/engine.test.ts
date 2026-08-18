@@ -1,5 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import { calculateQuote, marginAtPrice, priceAtMargin, solveForPrice } from './engine';
+import {
+  billableMonths,
+  calculateContract,
+  calculateQuote,
+  cappedHold,
+  kcForTarget,
+  marginAtPrice,
+  priceAtMargin,
+  solveForPrice,
+} from './engine';
 import {
   SEED_COST_LINES,
   SEED_DESTINATIONS,
@@ -9,7 +18,8 @@ import {
   SEED_SETTINGS,
 } from './reference';
 import type { QuoteInput, ReferenceData } from './types';
-import { DEFAULT_LBS_PER_CONTAINER, fromQuoteUnit, toQuoteUnit } from './units';
+import { ceilPrice, fromQuoteUnit, toQuoteUnit } from './units';
+import { apportion, deliveryPlan, monthSpan, monthsBetween } from './schedule';
 
 const ref: ReferenceData = {
   costLines: SEED_COST_LINES,
@@ -20,33 +30,26 @@ const ref: ReferenceData = {
   settings: SEED_SETTINGS,
 };
 
+/** A year-long window, so the hold cap never interferes unless a test wants it. */
 function input(overrides: Partial<QuoteInput> = {}): QuoteInput {
   return {
     destinationKey: 'ny',
     incoterm: 'FOB',
     processKey: 'washed',
     packagingKey: 'jute_70',
-    quantity: 1,
-    quantityMode: 'containers',
-    lbsPerContainer: DEFAULT_LBS_PER_CONTAINER,
-    kcMonth: '2026H',
-    kcPriceUsdPerLb: 0,
+    bags: 250,
+    kcUsdPerLb: 0,
     premiumUsdPerLb: 0,
-    disabledLines: [],
-    enabledLines: [],
-    storageMonths: 0,
-    financeMonths: 0,
+    holdMonths: 1,
+    fromMonth: '2027-01',
+    toMonth: '2027-12',
+    waiveFixedCost: false,
     ...overrides,
   };
 }
 
 describe('reconciliation with the source sheet', () => {
-  it('reproduces the $0.564/lb FOB differential for washed coffee in 70 kg bags', () => {
-    const r = calculateQuote(input(), ref);
-    expect(r.differentialUsdPerLb).toBeCloseTo(0.5641, 4);
-  });
-
-  it('reproduces each individual cost line from the sheet, in COP per pound', () => {
+  it('reproduces each cost line from the sheet, in COP per pound', () => {
     const r = calculateQuote(input(), ref);
     const cop = (key: string) => r.lines.find((l) => l.key === key)!.nativePerLb!;
     expect(cop('packaging')).toBeCloseTo(59.13, 2);
@@ -59,26 +62,21 @@ describe('reconciliation with the source sheet', () => {
     expect(cop('freight_agent')).toBeCloseTo(108.86, 2);
   });
 
-  it('matches the sheet on ocean freight and import cost per pound', () => {
-    const cif = calculateQuote(input({ incoterm: 'CIF' }), ref);
-    const sea = cif.lines.find((l) => l.key === 'seafreight')!;
-    expect(sea.usdPerLb).toBeCloseTo(0.0648, 4);
-
-    const ddp = calculateQuote(input({ incoterm: 'DDP' }), ref);
-    const imp = ddp.lines.find((l) => l.key === 'import_cost')!;
-    expect(imp.usdPerLb).toBeCloseTo(0.0674, 4);
+  it('gives an FOB differential of 61.41c — the sheet 56.41c plus the 5c carry cover', () => {
+    const r = calculateQuote(input(), ref);
+    expect(r.differentialUsdPerLb).toBeCloseTo(0.6141, 4);
   });
 
   it('prices the full DDP differential for every destination', () => {
     const expected: Record<string, number> = {
-      ny: 0.6963,
-      dupuy: 0.6833,
-      annex: 0.6963,
-      canada: 0.6937,
-      australia: 0.7222,
-      rotterdam: 0.6756,
-      uk: 0.6756,
-      dubai: 0.7844,
+      ny: 0.7463,
+      dupuy: 0.7333,
+      annex: 0.7463,
+      canada: 0.7437,
+      australia: 0.7722,
+      rotterdam: 0.7256,
+      uk: 0.7256,
+      dubai: 0.8344,
     };
     for (const [key, want] of Object.entries(expected)) {
       const r = calculateQuote(input({ destinationKey: key, incoterm: 'DDP' }), ref);
@@ -87,284 +85,345 @@ describe('reconciliation with the source sheet', () => {
   });
 });
 
-describe('incoterm ladder', () => {
-  it('adds ocean freight only from CIF, and import only at DDP', () => {
-    const fob = calculateQuote(input({ incoterm: 'FOB' }), ref);
-    const cif = calculateQuote(input({ incoterm: 'CIF' }), ref);
-    const ddp = calculateQuote(input({ incoterm: 'DDP' }), ref);
-    expect(cif.differentialUsdPerLb).toBeGreaterThan(fob.differentialUsdPerLb);
-    expect(ddp.differentialUsdPerLb).toBeGreaterThan(cif.differentialUsdPerLb);
-    expect(fob.lines.find((l) => l.key === 'seafreight')!.included).toBe(false);
-    expect(cif.lines.find((l) => l.key === 'import_cost')!.included).toBe(false);
-    expect(ddp.lines.find((l) => l.key === 'import_cost')!.included).toBe(true);
-  });
-});
-
-describe('quote selections that move the price', () => {
-  it('charges more milling for honey and natural', () => {
-    const washed = calculateQuote(input(), ref).differentialUsdPerLb;
-    const honey = calculateQuote(input({ processKey: 'honey' }), ref).differentialUsdPerLb;
-    const natural = calculateQuote(input({ processKey: 'natural' }), ref).differentialUsdPerLb;
-    expect(honey - washed).toBeCloseTo(0.0411, 3);
-    expect(natural - washed).toBeCloseTo(0.0823, 3);
-  });
-
-  it('charges more packaging for smaller bags', () => {
-    const b70 = calculateQuote(input(), ref).differentialUsdPerLb;
-    const b35 = calculateQuote(input({ packagingKey: 'pack_35' }), ref).differentialUsdPerLb;
-    const b24 = calculateQuote(input({ packagingKey: 'pack_24' }), ref).differentialUsdPerLb;
-    expect(b35).toBeGreaterThan(b70);
-    expect(b24).toBeGreaterThan(b35);
-    expect(b35 - b70).toBeCloseTo(0.0834, 3);
-  });
-
-  it('drops optional lines when the trader switches them off', () => {
-    const withLiner = calculateQuote(input(), ref).differentialUsdPerLb;
-    const without = calculateQuote(input({ disabledLines: ['grain_pro'] }), ref);
-    expect(withLiner - without.differentialUsdPerLb).toBeCloseTo(0.0149, 4);
-    expect(without.lines.find((l) => l.key === 'grain_pro')!.included).toBe(false);
-  });
-});
-
-describe('month-driven costs', () => {
-  it('leaves storage and finance out until they are switched on', () => {
+describe('grain pro and bag marks are permanent', () => {
+  it('always includes both, with no way to switch them off', () => {
     const r = calculateQuote(input(), ref);
+    expect(r.lines.find((l) => l.key === 'grain_pro')!.included).toBe(true);
+    expect(r.lines.find((l) => l.key === 'bag_marks')!.included).toBe(true);
+    expect(SEED_COST_LINES.filter((l) => l.waivable).map((l) => l.key)).toEqual(['fixed_cost']);
+  });
+});
+
+describe('holding the contract', () => {
+  it('bills only the months past the free window', () => {
+    expect(billableMonths(1, 2)).toBe(0);
+    expect(billableMonths(2, 2)).toBe(0);
+    expect(billableMonths(3, 2)).toBe(1);
+    expect(billableMonths(6, 2)).toBe(4);
+    expect(billableMonths(12, 2)).toBe(10);
+  });
+
+  it('charges nothing for a hold inside the free window', () => {
+    const r = calculateQuote(input({ destinationKey: 'rotterdam', incoterm: 'DDP', holdMonths: 2 }), ref);
+    expect(r.billableMonths).toBe(0);
     expect(r.storageUsdPerLb).toBe(0);
     expect(r.financeUsdPerLb).toBe(0);
+    expect(r.lines.find((l) => l.key === 'storage')!.excludedReason).toMatch(/fixed cost/);
   });
 
-  it('charges storage per packaging unit per month', () => {
+  it('charges storage and finance beyond it, and the cost climbs with the hold', () => {
+    const at = (holdMonths: number) =>
+      calculateQuote(input({ destinationKey: 'rotterdam', incoterm: 'DDP', holdMonths, kcUsdPerLb: 1.855, premiumUsdPerLb: 0.35 }), ref);
+    const two = at(2);
+    const six = at(6);
+    const twelve = at(12);
+    expect(six.billableMonths).toBe(4);
+    expect(twelve.billableMonths).toBe(10);
+    expect(six.totalCostUsdPerLb).toBeGreaterThan(two.totalCostUsdPerLb);
+    expect(twelve.totalCostUsdPerLb).toBeGreaterThan(six.totalCostUsdPerLb);
+    // Storage is EUR 1.40 per 70 kg bag per month, over four billed months.
+    expect(six.storageUsdPerLb).toBeCloseTo((1.4 / 154.322) * 4 * SEED_FX.EUR, 6);
+  });
+
+  it('leaves the carry to the buyer on FOB and CIF', () => {
+    for (const incoterm of ['FOB', 'CIF'] as const) {
+      const r = calculateQuote(
+        input({ destinationKey: 'rotterdam', incoterm, holdMonths: 12 }),
+        ref,
+      );
+      expect(r.storageUsdPerLb, incoterm).toBe(0);
+      expect(r.financeUsdPerLb, incoterm).toBe(0);
+      expect(r.lines.find((l) => l.key === 'finance')!.excludedReason).toMatch(/buyer carries/);
+    }
+    const ddp = calculateQuote(
+      input({ destinationKey: 'rotterdam', incoterm: 'DDP', holdMonths: 12, kcUsdPerLb: 1.855 }),
+      ref,
+    );
+    expect(ddp.financeUsdPerLb).toBeGreaterThan(0);
+  });
+
+  it('caps the hold at the shipment window', () => {
+    expect(cappedHold(9, '2027-01', '2027-05')).toBe(5);
+    expect(cappedHold(3, '2027-01', '2027-05')).toBe(3);
+    expect(cappedHold(9, '2027-01', '2027-01')).toBe(1);
     const r = calculateQuote(
-      input({ enabledLines: ['storage'], storageMonths: 3 }),
+      input({ destinationKey: 'rotterdam', incoterm: 'DDP', holdMonths: 12, fromMonth: '2027-01', toMonth: '2027-03' }),
       ref,
     );
-    // $1.05 per 70 kg bag per month, over 154.322 lb, for three months.
-    expect(r.storageUsdPerLb).toBeCloseTo((1.05 / 154.322) * 3, 6);
-  });
-
-  it('charges more storage per pound for smaller bags', () => {
-    const big = calculateQuote(input({ enabledLines: ['storage'], storageMonths: 1 }), ref);
-    const small = calculateQuote(
-      input({ enabledLines: ['storage'], storageMonths: 1, packagingKey: 'pack_24' }),
-      ref,
-    );
-    expect(small.storageUsdPerLb).toBeGreaterThan(big.storageUsdPerLb);
+    expect(r.billableMonths).toBe(1); // capped to 3 months, less the 2 free
   });
 
   it('charges finance on the full cargo value, not just the differential', () => {
     const r = calculateQuote(
-      input({ enabledLines: ['finance'], financeMonths: 2, kcPriceUsdPerLb: 1.85 }),
+      input({ destinationKey: 'rotterdam', incoterm: 'DDP', holdMonths: 6, kcUsdPerLb: 1.855, premiumUsdPerLb: 0.35 }),
       ref,
     );
-    const expectedBase = 1.85 + r.differentialUsdPerLb;
-    expect(r.financeUsdPerLb).toBeCloseTo(0.0072 * 2 * expectedBase, 6);
-    // The sheet charged 0.72% on the $0.564 stack alone; the correct base is
-    // roughly four times larger, so the line must be materially bigger.
-    expect(r.financeUsdPerLb).toBeGreaterThan(0.0072 * 2 * 0.564 * 3);
+    const expected = 0.0072 * 4 * (2.205 + r.differentialUsdPerLb);
+    expect(r.financeUsdPerLb).toBeCloseTo(expected, 6);
+  });
+});
+
+describe('waiving the fixed cost', () => {
+  const base = { destinationKey: 'rotterdam', incoterm: 'DDP' as const, kcUsdPerLb: 1.855, premiumUsdPerLb: 0.35 };
+
+  it('removes exactly 30c and says so', () => {
+    const normal = calculateQuote(input(base), ref);
+    const waived = calculateQuote(input({ ...base, waiveFixedCost: true }), ref);
+    expect(normal.totalCostUsdPerLb - waived.totalCostUsdPerLb).toBeCloseTo(0.3, 6);
+    expect(waived.waivedFixedCost).toBe(true);
+    expect(normal.waivedFixedCost).toBe(false);
+    expect(waived.lines.find((l) => l.key === 'fixed_cost')!.excludedReason).toMatch(/strategic/);
   });
 
-  it('warns instead of silently pricing storage at zero for Dubai', () => {
-    const r = calculateQuote(
-      input({ destinationKey: 'dubai', enabledLines: ['storage'], storageMonths: 2 }),
+  it('leaves every other line alone', () => {
+    const normal = calculateQuote(input(base), ref);
+    const waived = calculateQuote(input({ ...base, waiveFixedCost: true }), ref);
+    for (const line of normal.lines) {
+      if (line.key === 'fixed_cost') continue;
+      const other = waived.lines.find((l) => l.key === line.key)!;
+      expect(other.usdPerLb, line.key).toBeCloseTo(line.usdPerLb, 8);
+    }
+  });
+});
+
+describe('the quoted price', () => {
+  const priced = () =>
+    calculateQuote(
+      input({ destinationKey: 'rotterdam', incoterm: 'DDP', holdMonths: 2, kcUsdPerLb: 1.855, premiumUsdPerLb: 0.35 }),
       ref,
     );
-    expect(r.storageUsdPerLb).toBe(0);
-    expect(r.warnings.some((w) => w.includes('Storage'))).toBe(true);
+
+  it('rounds to two decimals and always upward', () => {
+    expect(ceilPrice(7.056)).toBe(7.06);
+    expect(ceilPrice(7.051)).toBe(7.06);
+    expect(ceilPrice(7.0)).toBe(7.0);
+    expect(ceilPrice(7.06)).toBe(7.06);
+    const r = priced();
+    for (const rung of r.ladder) {
+      // A whole number of cents, allowing for binary floating point.
+      expect(Math.abs(rung.displayPrice * 100 - Math.round(rung.displayPrice * 100))).toBeLessThan(1e-6);
+    }
+  });
+
+  it('quotes Rotterdam DDP at EUR 7.06 on the floor', () => {
+    const r = priced();
+    expect(r.totalCostUsdPerLb).toBeCloseTo(2.9306, 4);
+    expect(r.floor.displayPrice).toBe(7.06);
+    expect(r.quoteCurrency).toBe('EUR');
+    expect(r.quoteUnit).toBe('kg');
+  });
+
+  it('derives contract value from the rounded price, so the client can multiply', () => {
+    const r = priced();
+    const fromDisplay = fromQuoteUnit(r.floor.displayPrice, r.quoteCurrency, r.quoteUnit, ref.fx);
+    expect(r.floor.totalValueUsd).toBeCloseTo(fromDisplay * r.totalLbs, 6);
+  });
+
+  it('shows the agreed rungs and nothing else', () => {
+    const r = priced();
+    expect(r.ladder.map((x) => x.margin)).toEqual([0.16, 0.2, 0.225, 0.25, 0.3]);
+    for (let i = 1; i < r.ladder.length; i += 1) {
+      expect(r.ladder[i].displayPrice).toBeGreaterThan(r.ladder[i - 1].displayPrice);
+    }
+  });
+});
+
+describe('solvers', () => {
+  const priced = () =>
+    calculateQuote(
+      input({ destinationKey: 'ny', incoterm: 'DDP', holdMonths: 2, kcUsdPerLb: 1.855, premiumUsdPerLb: 0.35 }),
+      ref,
+    );
+
+  it('round-trips price and margin', () => {
+    const r = priced();
+    const target = 3.85;
+    const solved = solveForPrice(target, r, SEED_SETTINGS);
+    expect(
+      priceAtMargin(solved.margin, r.totalCostUsdPerLb, r.marginBaseUsdPerLb, 'on_price'),
+    ).toBeCloseTo(target, 8);
+  });
+
+  it('flags a price under the floor and under cost', () => {
+    const r = priced();
+    expect(solveForPrice(r.totalCostUsdPerLb - 0.1, r, SEED_SETTINGS).belowCost).toBe(true);
+    expect(solveForPrice(r.totalCostUsdPerLb / 0.9, r, SEED_SETTINGS).belowFloor).toBe(true);
+    expect(solveForPrice(r.totalCostUsdPerLb / 0.75, r, SEED_SETTINGS).belowFloor).toBe(false);
+  });
+
+  it('solves the KC a target price and margin would need', () => {
+    const base = input({ destinationKey: 'ny', incoterm: 'DDP', holdMonths: 2, kcUsdPerLb: 1.855, premiumUsdPerLb: 0.35 });
+    const target = 4.8;
+    const needed = kcForTarget(target, 0.2, base, ref)!;
+    expect(needed).toBeGreaterThan(0);
+    // Setting KC to the answer must make that price carry exactly that margin.
+    const at = calculateQuote({ ...base, kcUsdPerLb: needed }, ref);
+    expect(solveForPrice(target, at, SEED_SETTINGS).margin).toBeCloseTo(0.2, 8);
+  });
+
+  it('still solves with the carry and the waiver in play', () => {
+    const base = input({
+      destinationKey: 'rotterdam', incoterm: 'DDP', holdMonths: 8,
+      kcUsdPerLb: 1.9, premiumUsdPerLb: 0.4, waiveFixedCost: true,
+    });
+    const target = 3.6;
+    const needed = kcForTarget(target, 0.25, base, ref)!;
+    const at = calculateQuote({ ...base, kcUsdPerLb: needed }, ref);
+    expect(solveForPrice(target, at, SEED_SETTINGS).margin).toBeCloseTo(0.25, 8);
+  });
+});
+
+describe('the contract calendar', () => {
+  it('counts the window inclusively', () => {
+    expect(monthSpan('2027-01', '2027-05')).toBe(5);
+    expect(monthSpan('2027-01', '2027-01')).toBe(1);
+    expect(monthSpan('2026-11', '2027-02')).toBe(4);
+    expect(monthsBetween('2027-01', '2027-03').map((m) => m.label)).toEqual([
+      'Jan 2027', 'Feb 2027', 'Mar 2027',
+    ]);
+  });
+
+  it('splits 250 bags over January to May as 50 a month', () => {
+    const plan = deliveryPlan('2027-01', '2027-05', 250, 154.322, 123549);
+    expect(plan.months).toHaveLength(5);
+    expect(plan.months.map((m) => m.bags)).toEqual([50, 50, 50, 50, 50]);
+    expect(plan.even).toBe(true);
+    expect(plan.perMonthBags).toBe(50);
+  });
+
+  it('keeps bags whole and still sums to the order', () => {
+    for (const [bags, months] of [[250, 4], [301, 7], [97, 3], [7, 12]] as const) {
+      const plan = deliveryPlan('2027-01', `2027-${String(months).padStart(2, '0')}`, bags, 154.322, 1000);
+      const sum = plan.months.reduce((s, m) => s + m.bags, 0);
+      expect(sum, `${bags}/${months}`).toBe(bags);
+      expect(plan.months.every((m) => Number.isInteger(m.bags))).toBe(true);
+    }
+  });
+
+  it('apportions billing so the column adds up to the printed total', () => {
+    for (const total of [123549, 47937, 1, 999999]) {
+      const plan = deliveryPlan('2027-01', '2027-05', 250, 154.322, total);
+      expect(plan.months.reduce((s, m) => s + m.billing, 0)).toBe(total);
+    }
+    expect(apportion([1.5, 1.5, 1.5, 1.5], 6)).toEqual([2, 2, 1, 1]);
+  });
+});
+
+describe('multi-shipment contracts', () => {
+  const base = {
+    destinationKey: 'rotterdam',
+    incoterm: 'DDP' as const,
+    processKey: 'washed',
+    packagingKey: 'jute_70',
+    premiumUsdPerLb: 0.35,
+    holdMonths: 6,
+    fromMonth: '2027-01',
+    toMonth: '2027-12',
+    waiveFixedCost: false,
+  };
+  const shipments = [
+    { id: '1', label: 'June', kcCents: 185.5, bags: 280 },
+    { id: '2', label: 'October', kcCents: 190.25, bags: 280 },
+    { id: '3', label: 'December', kcCents: 193.8, bags: 280 },
+  ];
+
+  it('prices each shipment against its own KC', () => {
+    const c = calculateContract(shipments, base, 0.16, ref);
+    const costs = c.shipments.map((s) => Number((s.result.totalCostUsdPerLb * 100).toFixed(2)));
+    expect(costs).toEqual([305.57, 310.45, 314.1]);
+    expect(c.shipments.map((s) => s.displayPrice)).toEqual([7.36, 7.48, 7.57]);
+  });
+
+  it('blends by volume and reports a weighted KC', () => {
+    const c = calculateContract(shipments, base, 0.16, ref);
+    expect(c.totalBags).toBe(840);
+    expect(c.weightedKcUsdPerLb).toBeCloseTo(1.8985, 4);
+    expect(c.weightedCostUsdPerLb).toBeCloseTo(3.1004, 4);
+    expect(c.consolidatedDisplay).toBe(7.47);
+  });
+
+  it('totals the shipment lines, so the quote adds up', () => {
+    const c = calculateContract(shipments, base, 0.16, ref);
+    const sum = c.shipments.reduce((s, x) => s + x.valueUsd, 0);
+    expect(c.totalValueUsd).toBeCloseTo(sum, 6);
+  });
+
+  it('reverse-solves the blended price back to the margin it was priced at', () => {
+    const c = calculateContract(shipments, base, 0.16, ref);
+    const implied = marginAtPrice(
+      c.consolidatedUsdPerLb,
+      c.weightedCostUsdPerLb,
+      c.weightedMarginBaseUsdPerLb,
+      'on_price',
+    );
+    // Rounding the quoted price up can only add margin, never take it away.
+    expect(implied).toBeGreaterThanOrEqual(0.16);
+    expect(implied).toBeLessThan(0.161);
+
+    // Against the unrounded blend the solve is exact.
+    const exact = marginAtPrice(
+      priceAtMargin(0.16, c.weightedCostUsdPerLb, c.weightedMarginBaseUsdPerLb, 'on_price'),
+      c.weightedCostUsdPerLb,
+      c.weightedMarginBaseUsdPerLb,
+      'on_price',
+    );
+    expect(exact).toBeCloseTo(0.16, 10);
+  });
+
+  it('matches a single quote when there is only one shipment', () => {
+    const one = calculateContract([shipments[0]], base, 0.16, ref);
+    const single = calculateQuote(
+      { ...base, bags: 280, kcUsdPerLb: 1.855 },
+      ref,
+    );
+    expect(one.consolidatedDisplay).toBe(single.floor.displayPrice);
+    expect(one.totalValueUsd).toBeCloseTo(single.floor.totalValueUsd, 6);
+  });
+
+  it('weights the blend toward the larger shipment', () => {
+    const lopsided = calculateContract(
+      [
+        { id: '1', label: 'June', kcCents: 185.5, bags: 800 },
+        { id: '2', label: 'December', kcCents: 193.8, bags: 40 },
+      ],
+      base,
+      0.16,
+      ref,
+    );
+    expect(lopsided.weightedKcUsdPerLb).toBeLessThan(1.89);
+    expect(lopsided.weightedKcUsdPerLb).toBeGreaterThan(1.855);
   });
 });
 
 describe('FX sensitivity', () => {
-  it('reports the COP-denominated share of the differential', () => {
+  it('reports the peso-denominated share of the differential', () => {
     const r = calculateQuote(input(), ref);
     expect(r.copExposureUsdPerLb).toBeCloseTo(0.2541, 3);
   });
 
-  it('cheapens the COP side of the stack when the peso weakens', () => {
+  it('cheapens the peso side when the peso weakens', () => {
     const weak: ReferenceData = { ...ref, fx: { ...SEED_FX, COP: 1 / 4000 } };
     const base = calculateQuote(input(), ref).differentialUsdPerLb;
-    const atWeakPeso = calculateQuote(input(), weak).differentialUsdPerLb;
-    expect(atWeakPeso).toBeLessThan(base);
-    expect(base - atWeakPeso).toBeCloseTo(800.4467 / 3150 - 800.4467 / 4000, 3);
-  });
-});
-
-describe('margin', () => {
-  const priced = () =>
-    calculateQuote(input({ incoterm: 'DDP', kcPriceUsdPerLb: 1.85, premiumUsdPerLb: 0.35 }), ref);
-
-  it('prices the floor at the configured 16%', () => {
-    const r = priced();
-    expect(r.floor.margin).toBe(0.16);
-    expect(r.floor.priceUsdPerLb).toBeCloseTo(r.totalCostUsdPerLb / (1 - 0.16), 6);
-  });
-
-  it('renders a ladder from 20% to 30% in one-point steps', () => {
-    const r = priced();
-    const rungs = r.ladder.map((x) => Math.round(x.margin * 100));
-    expect(rungs).toContain(16);
-    expect(rungs).toContain(20);
-    expect(rungs).toContain(30);
-    expect(rungs).toEqual([...rungs].sort((a, b) => a - b));
-    // 16% floor plus 20..30 inclusive.
-    expect(r.ladder).toHaveLength(12);
-  });
-
-  it('increases price monotonically up the ladder', () => {
-    const r = priced();
-    for (let i = 1; i < r.ladder.length; i += 1) {
-      expect(r.ladder[i].priceUsdPerLb).toBeGreaterThan(r.ladder[i - 1].priceUsdPerLb);
-    }
-  });
-
-  it('round-trips price and margin in gross-margin mode', () => {
-    const r = priced();
-    const target = 3.15;
-    const solved = solveForPrice(target, r, SEED_SETTINGS);
-    const back = priceAtMargin(solved.margin, r.totalCostUsdPerLb, r.marginBaseUsdPerLb, 'on_price');
-    expect(back).toBeCloseTo(target, 8);
-  });
-
-  it('round-trips price and margin in markup-on-cost mode', () => {
-    const markupRef: ReferenceData = {
-      ...ref,
-      settings: { ...SEED_SETTINGS, marginMode: 'on_cost' },
-    };
-    const r = calculateQuote(
-      input({ incoterm: 'DDP', kcPriceUsdPerLb: 1.85, premiumUsdPerLb: 0.35 }),
-      markupRef,
-    );
-    const target = 3.15;
-    const m = marginAtPrice(target, r.totalCostUsdPerLb, r.marginBaseUsdPerLb, 'on_cost');
-    expect(priceAtMargin(m, r.totalCostUsdPerLb, r.marginBaseUsdPerLb, 'on_cost')).toBeCloseTo(
-      target,
-      8,
-    );
-  });
-
-  it('flags a target price that falls under the floor or under cost', () => {
-    const r = priced();
-    const underCost = solveForPrice(r.totalCostUsdPerLb - 0.1, r, SEED_SETTINGS);
-    expect(underCost.belowCost).toBe(true);
-    expect(underCost.belowFloor).toBe(true);
-
-    const thin = solveForPrice(r.totalCostUsdPerLb / (1 - 0.1), r, SEED_SETTINGS);
-    expect(thin.belowCost).toBe(false);
-    expect(thin.belowFloor).toBe(true);
-
-    const healthy = solveForPrice(r.totalCostUsdPerLb / (1 - 0.25), r, SEED_SETTINGS);
-    expect(healthy.belowFloor).toBe(false);
-  });
-
-  it('earns margin only on the differential when configured that way', () => {
-    const diffRef: ReferenceData = {
-      ...ref,
-      settings: { ...SEED_SETTINGS, marginBase: 'differential_only' },
-    };
-    const full = priced();
-    const diff = calculateQuote(
-      input({ incoterm: 'DDP', kcPriceUsdPerLb: 1.85, premiumUsdPerLb: 0.35 }),
-      diffRef,
-    );
-    expect(diff.marginBaseUsdPerLb).toBeCloseTo(diff.differentialUsdPerLb, 6);
-    expect(diff.floor.priceUsdPerLb).toBeLessThan(full.floor.priceUsdPerLb);
-    expect(diff.floor.priceUsdPerLb).toBeGreaterThan(diff.totalCostUsdPerLb);
-  });
-
-  it('excludes lines flagged as margin from the base it charges margin on', () => {
-    const flagged: ReferenceData = {
-      ...ref,
-      costLines: SEED_COST_LINES.map((l) =>
-        l.key === 'fixed_cost' ? { ...l, isMargin: true } : l,
-      ),
-    };
-    const r = calculateQuote(
-      input({ incoterm: 'DDP', kcPriceUsdPerLb: 1.85, premiumUsdPerLb: 0.35 }),
-      flagged,
-    );
-    expect(r.marginBaseUsdPerLb).toBeCloseTo(r.totalCostUsdPerLb - 0.25, 6);
-    // The price still recovers the fixed cost in full.
-    expect(r.floor.priceUsdPerLb).toBeGreaterThan(r.totalCostUsdPerLb);
-  });
-});
-
-describe('quantity', () => {
-  it('converts containers, bags and pounds consistently', () => {
-    const byContainer = calculateQuote(input({ quantity: 2, quantityMode: 'containers' }), ref);
-    expect(byContainer.totalLbs).toBeCloseTo(2 * DEFAULT_LBS_PER_CONTAINER, 6);
-    expect(byContainer.bags).toBeCloseTo((2 * DEFAULT_LBS_PER_CONTAINER) / 154.322, 6);
-
-    const byBag = calculateQuote(input({ quantity: 250, quantityMode: 'bags' }), ref);
-    expect(byBag.totalLbs).toBeCloseTo(250 * 154.322, 6);
-    expect(byBag.containers).toBeCloseTo(1, 3);
-  });
-
-  it('warns on a partial container', () => {
-    const r = calculateQuote(input({ quantity: 1.5, quantityMode: 'containers' }), ref);
-    expect(r.warnings.some((w) => w.includes('not a whole load'))).toBe(true);
-  });
-
-  it('scales total contract value with quantity', () => {
-    const one = calculateQuote(
-      input({ quantity: 1, kcPriceUsdPerLb: 1.85, premiumUsdPerLb: 0.35 }),
-      ref,
-    );
-    const three = calculateQuote(
-      input({ quantity: 3, kcPriceUsdPerLb: 1.85, premiumUsdPerLb: 0.35 }),
-      ref,
-    );
-    expect(three.floor.totalValueUsd).toBeCloseTo(one.floor.totalValueUsd * 3, 4);
-    expect(three.floor.priceUsdPerLb).toBeCloseTo(one.floor.priceUsdPerLb, 8);
-  });
-});
-
-describe('client-facing units', () => {
-  it('quotes US destinations in USD per pound', () => {
-    const r = calculateQuote(
-      input({ destinationKey: 'ny', kcPriceUsdPerLb: 1.85, premiumUsdPerLb: 0.35 }),
-      ref,
-    );
-    expect(r.quoteCurrency).toBe('USD');
-    expect(r.quoteUnit).toBe('lb');
-    expect(r.floor.displayPrice).toBeCloseTo(r.floor.priceUsdPerLb, 8);
-  });
-
-  it('quotes Rotterdam in euro per kilo', () => {
-    const r = calculateQuote(
-      input({ destinationKey: 'rotterdam', kcPriceUsdPerLb: 1.85, premiumUsdPerLb: 0.35 }),
-      ref,
-    );
-    expect(r.quoteCurrency).toBe('EUR');
-    expect(r.quoteUnit).toBe('kg');
-    expect(r.floor.displayPrice).toBeCloseTo(
-      (r.floor.priceUsdPerLb * 2.2046226218487757) / SEED_FX.EUR,
-      6,
-    );
+    const atWeak = calculateQuote(input(), weak).differentialUsdPerLb;
+    expect(base - atWeak).toBeCloseTo(800.4467 / 3150 - 800.4467 / 4000, 3);
   });
 
   it('round-trips a client-facing price back to USD per pound', () => {
-    const usdPerLb = 3.12;
-    for (const [cur, unit] of [
-      ['EUR', 'kg'],
-      ['AUD', 'kg'],
-      ['GBP', 'kg'],
-      ['CAD', 'kg'],
-      ['USD', 'lb'],
-      ['USD', 'mt'],
-    ] as const) {
-      const shown = toQuoteUnit(usdPerLb, cur, unit, SEED_FX);
-      expect(fromQuoteUnit(shown, cur, unit, SEED_FX)).toBeCloseTo(usdPerLb, 10);
+    for (const [cur, unit] of [['EUR', 'kg'], ['AUD', 'kg'], ['GBP', 'kg'], ['USD', 'lb']] as const) {
+      const shown = toQuoteUnit(3.12, cur, unit, SEED_FX);
+      expect(fromQuoteUnit(shown, cur, unit, SEED_FX)).toBeCloseTo(3.12, 10);
     }
   });
 });
 
-describe('input validation', () => {
-  it('rejects an unknown destination', () => {
-    expect(() => calculateQuote(input({ destinationKey: 'mars' }), ref)).toThrow(/destination/);
+describe('warnings', () => {
+  it('separates what a trader can act on from what only admin can', () => {
+    const r = calculateQuote(input({ bags: 137, destinationKey: 'dubai', incoterm: 'DDP', holdMonths: 6 }), ref);
+    expect(r.warnings.some((w) => !w.adminOnly && w.text.includes('containers'))).toBe(true);
+    expect(r.warnings.some((w) => w.adminOnly && w.text.includes('Storage'))).toBe(true);
   });
 
-  it('warns when no KC price or premium has been entered', () => {
-    const r = calculateQuote(input(), ref);
-    expect(r.warnings.some((w) => w.includes('KC price'))).toBe(true);
-    expect(r.warnings.some((w) => w.includes('premium'))).toBe(true);
+  it('rejects an unknown destination', () => {
+    expect(() => calculateQuote(input({ destinationKey: 'mars' }), ref)).toThrow(/destination/);
   });
 });

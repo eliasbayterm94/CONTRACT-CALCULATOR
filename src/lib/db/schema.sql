@@ -18,9 +18,8 @@ CREATE TABLE IF NOT EXISTS cost_lines (
   amount        REAL NOT NULL DEFAULT 0,
   lbs_per_unit  REAL NOT NULL DEFAULT 0,
   per_month     INTEGER NOT NULL DEFAULT 0,
-  optional      INTEGER NOT NULL DEFAULT 0,
-  default_on    INTEGER NOT NULL DEFAULT 1,
   is_margin     INTEGER NOT NULL DEFAULT 0,
+  waivable      INTEGER NOT NULL DEFAULT 0,
   sort_order    INTEGER NOT NULL DEFAULT 0,
   active        INTEGER NOT NULL DEFAULT 1
 );
@@ -30,9 +29,10 @@ CREATE TABLE IF NOT EXISTS packaging_types (
   label        TEXT NOT NULL,
   kg_per_unit  REAL NOT NULL,
   lbs_per_unit REAL NOT NULL,
-  amount       REAL NOT NULL,
-  currency     TEXT NOT NULL DEFAULT 'COP',
-  active       INTEGER NOT NULL DEFAULT 1
+  amount         REAL NOT NULL,
+  currency       TEXT NOT NULL DEFAULT 'COP',
+  trader_default INTEGER NOT NULL DEFAULT 0,
+  active         INTEGER NOT NULL DEFAULT 1
 );
 
 CREATE TABLE IF NOT EXISTS process_types (
@@ -103,6 +103,13 @@ CREATE TABLE IF NOT EXISTS quotes (
   input_json   TEXT NOT NULL,
   result_json  TEXT NOT NULL,
   snapshot_json TEXT NOT NULL,
+  -- Multi-shipment contracts store their shipment rows; single quotes leave it null.
+  shipments_json TEXT,
+  schedule_json  TEXT,
+  from_month   TEXT,
+  to_month     TEXT,
+  hold_months  INTEGER,
+  waived_fixed_cost INTEGER NOT NULL DEFAULT 0,
   chosen_margin REAL,
   chosen_price_usd_per_lb REAL,
   created_at   TEXT NOT NULL DEFAULT (datetime('now')),
@@ -121,3 +128,12 @@ CREATE TABLE IF NOT EXISTS audit_log (
 
 CREATE INDEX IF NOT EXISTS idx_quotes_created ON quotes (created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_audit_at ON audit_log (at DESC);
+
+-- Latest KC spot fetched from the market feed. One row, id fixed at 1.
+CREATE TABLE IF NOT EXISTS kc_spot (
+  id          INTEGER PRIMARY KEY CHECK (id = 1),
+  price_cents REAL NOT NULL,
+  as_of       TEXT NOT NULL,
+  source      TEXT NOT NULL,
+  fetched_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);

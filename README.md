@@ -1,44 +1,132 @@
-# Forest Contract Calculator
+# Forest Quote Desk
 
 KC-linked contract quoting for Forest Coffee. Built from the *Forest Spot Contracts Process*
-sheet, which it reproduces to the cent and then extends with a margin ladder, a two-way
-margin/price solver, live FX, and an audited admin module.
+sheet, dressed in the Forest Design System, and extended with a price ladder, three solvers, a
+delivery calendar and a client-ready quote sheet.
 
-## What it does
+## How a price is built
 
-Every price is assembled per pound in US dollars, the unit the Coffee "C" (KC) contract trades in:
+Everything is assembled per pound in US dollars — the unit KC trades in — and converted to the
+client's own currency and unit at the very end.
 
 ```
-green coffee   = KC month price + quality premium
-differential   = packaging + milling + transport + port + freight + margin-bearing fixed lines
-                 (+ ocean freight from CIF, + import and unloading at DDP, + storage if carried)
-finance        = monthly rate x months x (green coffee + differential)
-break-even     = green coffee + differential + finance
-selling price  = break-even grossed up by the margin
+green coffee  = KC + quality premium
+differential  = packaging + milling + transport + port + freight + fixed cost
+                (+ ocean freight from CIF, + import and unloading at DDP,
+                 + storage while we carry it — DDP only)
+finance       = monthly rate x billed months x (green coffee + differential)   DDP only
+break-even    = green coffee + differential + finance
+selling price = break-even grossed up by the margin, rounded up to two decimals
 ```
 
-- **Price ladder** — every quote is priced at the 16% floor and across 20–30% in one-point steps,
-  in USD/lb, US cents/lb, the client's own currency and unit, and total contract value.
-- **Projected KC** — type a scenario price ("what if KC goes to 220?") and the whole ladder moves.
-  The field is flagged whenever it differs from the desk's figure.
-- **Two-way solver** — name a margin and get the price, or name the price the client is pushing for
-  and get the margin it leaves, flagged when it falls under the floor or under cost.
-- **Per-destination units** — US destinations quote in USD/lb; Canada, Rotterdam, the UK, Australia
-  and Dubai quote in their own currency per kilo. Configurable per destination.
-- **Audited quote history** — a saved quote stamps the KC price, the premium, every exchange rate
-  and the entire cost table as they stood, so any number can be explained months later.
+**The quoted price is rounded first, and everything else derives from it** — contract value, cents
+per pound, margin. A client multiplies the price by the quantity, so the two have to agree.
 
-## Getting started
+## What the screens do
+
+**Quote** — one KC field with a *Latest* button, the shipment window, how long the contract is
+held, then the terms. Produces the price at the 16% floor and across 16 / 20 / 22.5 / 25 / 30%,
+with the step up between rungs. Three solvers sit directly under the price:
+
+| Solver | You give it | It tells you |
+| --- | --- | --- |
+| Margin → price | a margin | what to quote |
+| Price → margin | the client's price | the margin it leaves |
+| Price target → KC needed | a price *and* a margin | where KC has to be |
+
+Below that, the delivery schedule: 250 bags from January to May is 50 bags a month, with the
+monthly billing in the client's currency. Bags stay whole and the billing column adds up exactly
+to the printed total.
+
+**Multi-shipment** (admin) — one contract shipped across months, each against its own KC. Prices
+each shipment, blends by volume, and reverse-solves a single blended price back to a margin.
+
+**Rates & costs** (admin) — every figure a quote is built from. See below.
+
+**History** — every saved quote with the KC, the rates and the whole cost table stamped as they
+stood, so any number can be explained later.
+
+## Who sees what
+
+Anyone can build and save quotes. Signing in unlocks the cost tables, the premium, multi-shipment,
+and the numbers that would give away cost:
+
+| Hidden from traders | Why |
+| --- | --- |
+| Cost breakdown | the composition of your cost |
+| Break-even | a cost figure |
+| Quality premium | a cost figure |
+| Margin per pound | a cost figure |
+| Cost-table warnings | an admin problem a trader cannot act on |
+| Waive fixed cost | a pricing decision, not a quoting one |
+
+Traders keep the full ladder, all three solvers, the schedule, and the differential over KC —
+which is what you actually quote, not a cost.
+
+One honest limitation: a trader who sees both a margin and a price can work back to the cost.
+Hiding the breakdown hides its *composition*, not the total. If cost has to be genuinely invisible,
+the ladder needs unlabelled tiers instead of percentages.
+
+## Editing costs
+
+The admin tables are built for the job rather than for filling in once:
+
+- **Amounts stay as invoiced** — per bag, per container, per truck — with **what that works out to
+  per pound** in the next column. No mental arithmetic to see what a change does.
+- **A reference quote at the top of the cost table** re-prices live against your unsaved edits, so
+  you see `+5.00¢/lb vs saved` before you commit anything.
+- **Changed fields highlight**, the bar counts unsaved changes, each row has an **Undo**, and the
+  whole table saves in one go.
+- Every save is written to the audit log with who and when.
+
+## Rules that differ from the original sheet
+
+1. **Fixed cost is 30¢/lb**, not 25¢. The extra 5¢ covers up to two months of carry on every quote.
+2. **Storage and finance are DDP only.** On FOB and CIF the buyer owns the coffee from the port and
+   carries it themselves.
+3. **The carry has a two-month grace, applied as a deduction.** A five-month hold bills three
+   months, not five — otherwise month 2 costs nothing and month 3 costs triple.
+4. **The hold can never exceed the shipment window.** Set a two-month window and the selector caps
+   at two.
+5. **Finance is charged on the full cargo value**, not just the logistics differential. The sheet
+   ignored the coffee, which is roughly 75% of what is actually financed.
+6. **Margin is explicit** — a share of the selling price, on full landed cost. Both are settings.
+7. **Grain Pro and bag marks are permanent lines**, no longer optional.
+8. **Traders quote 70 kg jute only.** Admin can use any packaging.
+9. **Missing rates warn** rather than silently pricing at zero.
+
+All of it is covered by the engine tests (`npm test`), which reconcile line by line against the
+original sheet before applying the changes above.
+
+## Data sources
+
+| Input | Source |
+| --- | --- |
+| KC forward curve | Entered by hand in Admin — the full curve needs a licensed feed |
+| KC spot | *Latest* button: Yahoo Finance, falling back to Stooq |
+| Quality premium | Entered by hand in Admin |
+| TRM (USD/COP) | Banco de la República via `datos.gov.co` |
+| EUR, GBP, AUD, CAD | ECB via `api.frankfurter.app` |
+
+**The KC spot feed is delayed by roughly 10–30 minutes and is not licensed for redistribution.** It
+is a convenience for the desk — a starting number a trader confirms against their own feed before
+quoting. The field says where the figure came from and how old it is. A failed fetch reports the
+error and offers the last stored price rather than blanking the field mid-quote.
+
+Any FX rate can be **pinned** to a manual value, which a fetch will never overwrite — use it to
+quote against a booked forward rather than spot. TRM is entered the way a trader says it, pesos per
+dollar.
+
+## Running it
 
 ```bash
 npm install
 cp .env.example .env.local     # set ADMIN_PASSWORD and SESSION_SECRET
-npm run seed                   # loads the sheet's cost tables (also runs automatically on first boot)
 npm run dev
 ```
 
 `SESSION_SECRET` has no default on purpose — without it, admin sign-in is disabled rather than
-falling back to something guessable. Generate one with:
+falling back to something guessable:
 
 ```bash
 node -e "console.log(require('crypto').randomBytes(32).toString('base64url'))"
@@ -49,72 +137,41 @@ node -e "console.log(require('crypto').randomBytes(32).toString('base64url'))"
 | `npm run dev` | Development server |
 | `npm run build` / `npm start` | Production build and serve |
 | `npm test` | Engine tests, including reconciliation against the source sheet |
-| `npm run seed` | Re-seed reference data (never overwrites KC prices, premiums or pinned FX) |
+| `npm run seed` | Re-seed reference data (never touches KC prices, premiums or pinned FX) |
 
-## Who can do what
-
-Anyone with the URL can build and save quotes. Editing the cost tables, monthly premiums, KC prices
-and FX needs the admin password. Every admin change is written to the audit log with who and when.
-
-## Data sources
-
-| Input | Source |
-| --- | --- |
-| KC futures by contract month | Entered by hand in Admin. The full forward curve needs a licensed feed, so the desk types it. |
-| Quality premium by month | Entered by hand in Admin. |
-| TRM (USD/COP) | Banco de la República, via `datos.gov.co`. |
-| EUR, GBP, AUD, CAD | ECB reference rates, via `api.frankfurter.app`. |
-
-Both FX sources are fetched on demand from Admin. A failed fetch reports the error and leaves the
-stored rates untouched — it never zeroes a rate or half-applies an update. Any rate can be **pinned**
-to a manual value, which the fetch will never overwrite; use this to quote against a booked forward
-rather than spot. TRM is entered the way a trader says it, pesos per dollar.
-
-Both hosts must be reachable from wherever the app is deployed.
-
-## What the sheet said, and what changed
-
-The engine reproduces the sheet's FOB differential of **$0.5641/lb** for washed coffee in 70 kg bags
-at TRM 3,150, line for line, and every destination's DDP differential. Three deliberate changes:
-
-1. **Finance is charged on the full cargo value.** The sheet applied 0.72%/month to the $0.564 cost
-   stack alone, ignoring the coffee — roughly 75% of what is actually financed. It now applies to
-   green coffee plus the differential, which makes the line about four times larger. `Admin →
-   Pricing policy` can be set back if you need to match historic quotes.
-2. **Margin is explicit.** The sheet had no margin step. Margin defaults to a share of the selling
-   price (gross margin) charged on full landed cost. Both of those are settings: margin can be a
-   markup on cost instead, and can be charged on the differential only, leaving the coffee at cost.
-3. **Zeroes warn instead of pricing silently.** Dubai has no storage rate and no destination has an
-   unloading cost in the sheet. Rather than quietly quoting those at nothing, the calculator says so.
+The app seeds itself on first boot, so a fresh checkout comes up with the sheet already loaded.
 
 ## Open items
 
 - **Unloading (DDP)** is zero for every destination — the sheet never filled it in.
 - **Dubai storage** has no rate.
-- **35 kg packaging at 24,843 COP** is 2.7x the cost of a 70 kg bag for half the volume. Plausible
-  for a vacuum or box pack, but worth confirming against an invoice.
-- **GMF** is modelled as a flat 3.19 COP/lb, as in the sheet, not as 0.4% of peso flows.
-- **Partial containers** warn rather than reprice: per-pound freight, port and inland transport all
-  assume a full load, so a half container understates them.
-- **Quality tiers.** Premiums are stored per month with a `quality_key` column already in place, but
-  only a single `standard` tier is exposed. Adding 84+/86+ tiers needs no migration.
+- **35 kg packaging at 24,843 COP** is 2.7x a 70 kg bag for half the volume. Plausible for a vacuum
+  pack, worth checking against an invoice.
+- **GMF** is a flat 3.19 COP/lb, as in the sheet, not 0.4% of peso flows.
+- **Partial containers** warn rather than reprice — freight, port and inland transport assume full
+  loads.
+- **Multi-shipment shares one hold period.** Per-shipment holds would need a column per row.
+- **Quality tiers.** Premiums carry a `quality_key` column but only a `standard` tier is exposed.
 
 ## Layout
 
 ```
-src/lib/pricing/    engine.ts (pure, tested), types.ts, units.ts, reference.ts (the sheet)
-src/lib/db/         schema.sql, accessors, seed
-src/lib/            kc.ts (contract months), fx.ts, auth.ts, format.ts
-src/app/            quote screen, /admin, /quotes, server actions
-src/components/     QuoteBuilder and admin form helpers
+src/lib/pricing/   engine.ts (pure, tested), schedule.ts, units.ts, types.ts, reference.ts
+src/lib/db/        schema.sql, accessors, seed
+src/lib/           kcFeed.ts, fx.ts, auth.ts, quoteSheet.ts, format.ts
+src/app/           quote, /multi, /admin, /quotes, /api/kc/latest, server actions
+src/components/    QuoteBuilder, MultiShipmentBuilder, shell, admin editors
 ```
 
-The pricing engine is pure TypeScript with no I/O, so the browser recalculates instantly on every
-keystroke while the server recomputes the same numbers when a quote is saved — the browser's figures
-are never trusted.
+The pricing engine is pure TypeScript with no I/O, so the browser recalculates on every keystroke
+while the server recomputes the same numbers when a quote is saved — posted figures are never
+trusted.
 
 ## Deployment
 
 State lives in SQLite at `data/calculator.db` (override with `DATABASE_PATH`). That needs a
 persistent disk, so a long-running Node host or container suits it; a serverless platform with an
 ephemeral filesystem would lose the quote history and any rate edits between invocations.
+
+`fonts.googleapis.com`, `datos.gov.co`, `api.frankfurter.app` and the KC feed hosts must be
+reachable from wherever it runs.
