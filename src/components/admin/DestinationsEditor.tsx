@@ -133,12 +133,12 @@ export default function DestinationsEditor({
                     </select>
                   </td>
                   <td>
-                    <input
+                    <label className="qc-check"><input
                       type="checkbox" name={`d_active_${d.key}`}
                       checked={d.active} disabled={locked}
                       aria-label={`${d.label} active`}
                       onChange={(e) => update(d.key, 'active', e.target.checked)}
-                    />
+                    /></label>
                   </td>
                   <td>
                     <button

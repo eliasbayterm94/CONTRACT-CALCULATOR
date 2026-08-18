@@ -2,7 +2,6 @@
 
 import { revalidatePath } from 'next/cache';
 import { cookies } from 'next/headers';
-import { randomUUID } from 'node:crypto';
 import {
   COOKIE_MAX_AGE,
   COOKIE_NAME,
@@ -11,12 +10,10 @@ import {
   requireAdmin,
   verifyPassword,
 } from '@/lib/auth';
-import { getDb, getReferenceData, logAudit, setKcPrice, setPremium, setSetting } from '@/lib/db';
+import { getDb, logAudit, setKcPrice, setPremium, setSetting } from '@/lib/db';
 import { clearFxOverride, overrideFxRate, refreshFxRates } from '@/lib/fx';
-import { calculateContract, calculateQuote } from '@/lib/pricing/engine';
-import type { CurrencyCode, QuoteInput, Shipment } from '@/lib/pricing/types';
+import type { CurrencyCode } from '@/lib/pricing/types';
 import { trmToUsdPerCop } from '@/lib/pricing/units';
-import type { ScheduleMonth } from '@/lib/pricing/schedule';
 
 export interface ActionResult {
   ok: boolean;
@@ -283,125 +280,4 @@ export async function saveFxOverrides(_prev: ActionResult | null, form: FormData
   if (pinned.length) parts.push(`Pinned ${pinned.join(', ')}.`);
   if (released.length) parts.push(`Released ${released.join(', ')}.`);
   return { ok: true, message: parts.join(' ') || 'No FX changes.' };
-}
-
-/* ----------------------------------------------------------- save quotes -- */
-
-function newReference(): string {
-  const day = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-  return `FC-${day}-${randomUUID().slice(0, 4).toUpperCase()}`;
-}
-
-export interface SaveQuotePayload {
-  input: QuoteInput;
-  clientName: string;
-  chosenMargin: number | null;
-  chosenPriceUsdPerLb: number | null;
-  schedule: ScheduleMonth[];
-}
-
-export async function saveQuote(
-  payload: SaveQuotePayload,
-): Promise<ActionResult & { reference?: string }> {
-  const ref = getReferenceData();
-  // Recompute server-side rather than trusting numbers posted by the browser.
-  let result;
-  try {
-    result = calculateQuote(payload.input, ref);
-  } catch (error) {
-    return { ok: false, message: (error as Error).message };
-  }
-
-  const actor = (await currentAdmin()) ?? 'trader';
-  const reference = newReference();
-
-  getDb()
-    .prepare(
-      `INSERT INTO quotes
-        (reference, client_name, input_json, result_json, snapshot_json, schedule_json,
-         from_month, to_month, hold_months, waived_fixed_cost,
-         chosen_margin, chosen_price_usd_per_lb, created_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    )
-    .run(
-      reference,
-      payload.clientName || null,
-      JSON.stringify(payload.input),
-      JSON.stringify(result),
-      JSON.stringify(ref),
-      JSON.stringify(payload.schedule),
-      payload.input.fromMonth,
-      payload.input.toMonth,
-      payload.input.holdMonths,
-      result.waivedFixedCost ? 1 : 0,
-      payload.chosenMargin,
-      payload.chosenPriceUsdPerLb,
-      actor,
-    );
-
-  logAudit(actor, 'quotes', reference, 'create', {
-    destination: payload.input.destinationKey,
-    incoterm: payload.input.incoterm,
-  });
-  revalidatePath('/quotes');
-  return { ok: true, message: `Saved as ${reference}.`, reference };
-}
-
-export interface SaveContractPayload {
-  base: Omit<QuoteInput, 'bags' | 'kcUsdPerLb'>;
-  shipments: Shipment[];
-  margin: number;
-  clientName: string;
-}
-
-export async function saveContract(
-  payload: SaveContractPayload,
-): Promise<ActionResult & { reference?: string }> {
-  const g = await guard();
-  if ('ok' in g) return g;
-  const ref = getReferenceData();
-  let contract;
-  try {
-    contract = calculateContract(payload.shipments, payload.base, payload.margin, ref);
-  } catch (error) {
-    return { ok: false, message: (error as Error).message };
-  }
-
-  const reference = newReference();
-  const representative: QuoteInput = {
-    ...payload.base,
-    bags: contract.totalBags,
-    kcUsdPerLb: contract.weightedKcUsdPerLb,
-  };
-
-  getDb()
-    .prepare(
-      `INSERT INTO quotes
-        (reference, client_name, input_json, result_json, snapshot_json, shipments_json,
-         from_month, to_month, hold_months, waived_fixed_cost,
-         chosen_margin, chosen_price_usd_per_lb, created_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    )
-    .run(
-      reference,
-      payload.clientName || null,
-      JSON.stringify(representative),
-      JSON.stringify(contract),
-      JSON.stringify(ref),
-      JSON.stringify(payload.shipments),
-      payload.base.fromMonth,
-      payload.base.toMonth,
-      payload.base.holdMonths,
-      payload.base.waiveFixedCost ? 1 : 0,
-      payload.margin,
-      contract.consolidatedUsdPerLb,
-      g.actor,
-    );
-
-  logAudit(g.actor, 'quotes', reference, 'create_contract', {
-    shipments: payload.shipments.length,
-    destination: payload.base.destinationKey,
-  });
-  revalidatePath('/quotes');
-  return { ok: true, message: `Saved as ${reference}.`, reference };
 }

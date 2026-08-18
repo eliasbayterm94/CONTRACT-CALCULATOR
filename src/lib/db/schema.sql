@@ -93,29 +93,6 @@ CREATE TABLE IF NOT EXISTS premiums (
   PRIMARY KEY (month_key, quality_key)
 );
 
--- A saved quote stamps the full inputs, the result, and a snapshot of every
--- rate and cost table used, so the number can be reproduced exactly later.
-CREATE TABLE IF NOT EXISTS quotes (
-  id           INTEGER PRIMARY KEY AUTOINCREMENT,
-  reference    TEXT NOT NULL UNIQUE,
-  client_name  TEXT,
-  notes        TEXT,
-  input_json   TEXT NOT NULL,
-  result_json  TEXT NOT NULL,
-  snapshot_json TEXT NOT NULL,
-  -- Multi-shipment contracts store their shipment rows; single quotes leave it null.
-  shipments_json TEXT,
-  schedule_json  TEXT,
-  from_month   TEXT,
-  to_month     TEXT,
-  hold_months  INTEGER,
-  waived_fixed_cost INTEGER NOT NULL DEFAULT 0,
-  chosen_margin REAL,
-  chosen_price_usd_per_lb REAL,
-  created_at   TEXT NOT NULL DEFAULT (datetime('now')),
-  created_by   TEXT
-);
-
 CREATE TABLE IF NOT EXISTS audit_log (
   id        INTEGER PRIMARY KEY AUTOINCREMENT,
   at        TEXT NOT NULL DEFAULT (datetime('now')),
@@ -126,7 +103,6 @@ CREATE TABLE IF NOT EXISTS audit_log (
   detail    TEXT
 );
 
-CREATE INDEX IF NOT EXISTS idx_quotes_created ON quotes (created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_audit_at ON audit_log (at DESC);
 
 -- Latest KC spot fetched from the market feed. One row, id fixed at 1.
@@ -137,3 +113,6 @@ CREATE TABLE IF NOT EXISTS kc_spot (
   source      TEXT NOT NULL,
   fetched_at  TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+-- Quotes are not stored: the calculator prices and exports, it does not keep a book.
+DROP TABLE IF EXISTS quotes;

@@ -82,20 +82,20 @@ export default function PackagingProcessEditor({
                   <strong>{cents(perLb(p.amount, p.lbsPerUnit, p.currency))}</strong>/lb
                 </td>
                 <td>
-                  <input
+                  <label className="qc-check"><input
                     type="radio" name="trader_packaging" value={p.key}
                     checked={traderPackaging === p.key} disabled={locked}
                     aria-label={`${p.label} is the trader default`}
                     onChange={() => setTraderPackaging(p.key)}
-                  />
+                  /></label>
                 </td>
                 <td>
-                  <input
+                  <label className="qc-check"><input
                     type="checkbox" name={`p_active_${p.key}`}
                     checked={p.active} disabled={locked}
                     aria-label={`${p.label} active`}
                     onChange={(e) => pack.update(p.key, 'active', e.target.checked)}
-                  />
+                  /></label>
                 </td>
                 <td>
                   <button
@@ -153,12 +153,12 @@ export default function PackagingProcessEditor({
                   <strong>{cents(perLb(p.amount, p.lbsPerUnit, p.currency))}</strong>/lb
                 </td>
                 <td>
-                  <input
+                  <label className="qc-check"><input
                     type="checkbox" name={`pr_active_${p.key}`}
                     checked={p.active} disabled={locked}
                     aria-label={`${p.label} active`}
                     onChange={(e) => proc.update(p.key, 'active', e.target.checked)}
-                  />
+                  /></label>
                 </td>
                 <td>
                   <button

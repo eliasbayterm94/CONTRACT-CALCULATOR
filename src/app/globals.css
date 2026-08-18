@@ -1016,6 +1016,22 @@ body {
   .qc-stickybar .fc-btn { min-height: 44px; padding-inline: 18px; }
   /* Compact numeric fields inside shipment cards stay comfortable too. */
   .qc-ship-card .qc-input { min-height: 44px; }
+  .qc-rowreset, .qc-rowdel { min-height: 44px; }
+}
+
+/* A checkbox is 18px however you style it, so the label around it carries the
+   tap target. On a pointer device it collapses back to the box. */
+.qc-check {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 44px;
+  min-height: 44px;
+  cursor: pointer;
+}
+.qc-check input { width: 18px; height: 18px; accent-color: var(--fc-navy); cursor: pointer; }
+@media (min-width: 1024px) {
+  .qc-check { min-width: 0; min-height: 0; }
 }
 
 /* iOS zooms any field under 16px on focus, which throws the layout. */
@@ -1371,6 +1387,11 @@ th.qc-num { text-align: right; }
 .qc-row-floor:hover { background: rgba(231,226,68,.2) !important; }
 .qc-row-floor td:first-child { box-shadow: inset 3px 0 0 var(--fc-yellow-600); }
 
+/* The rung currently driving the headline, the schedule and the quote sheet. */
+.qc-row-active { background: var(--fc-blue-100) !important; }
+.qc-row-active:hover { background: #dbe6f0 !important; }
+.qc-row-active td:first-child { box-shadow: inset 3px 0 0 var(--fc-navy); }
+
 .qc-marginpct { font-family: var(--fc-font-mono); font-weight: var(--fc-fw-semibold); font-size: var(--fc-fs-14); color: var(--fc-navy); }
 .qc-floorbadge {
   margin-left: 7px;
@@ -1399,7 +1420,10 @@ th.qc-num { text-align: right; }
   gap: 4px 12px;
   align-items: baseline;
 }
+.qc-rung { width: 100%; text-align: left; font: inherit; color: inherit; cursor: pointer; background: #fff; }
+.qc-rung:hover { border-color: var(--fc-navy); }
 .qc-rung.is-floor { border-color: var(--fc-yellow-600); background: rgba(231,226,68,.10); }
+.qc-rung.is-active { border-color: var(--fc-navy); background: var(--fc-blue-100); }
 .qc-rung-margin { font-family: var(--fc-font-mono); font-weight: var(--fc-fw-semibold); font-size: var(--fc-fs-16); color: var(--fc-navy); }
 .qc-rung-price {
   grid-column: 2; justify-self: end;
@@ -1921,33 +1945,6 @@ tr:has(.is-dirty) { background: rgba(231, 226, 68, 0.07); }
 .qc-kc-fetch:hover:not(:disabled) { background: rgba(231, 226, 68, 0.16); border-color: var(--fc-yellow); color: var(--fc-yellow); }
 .qc-kc-fetch:disabled { opacity: 0.5; cursor: progress; }
 .qc-kc-fetch svg { width: 13px; height: 13px; }
-
-/* Quote history */
-.qc-empty {
-  padding: 48px 20px;
-  text-align: center;
-  color: var(--fc-ink-300);
-  font-size: 13px;
-}
-.qc-empty a { color: var(--fc-navy); font-weight: var(--fc-fw-semibold); }
-
-.qc-ref {
-  font-family: var(--fc-font-mono);
-  font-weight: var(--fc-fw-semibold);
-  color: var(--fc-navy);
-}
-.qc-tagline {
-  display: inline-flex;
-  align-items: center;
-  border-radius: var(--fc-radius-1);
-  padding: 2px 7px;
-  font-size: 9px;
-  font-weight: var(--fc-fw-bold);
-  letter-spacing: var(--fc-ls-eyebrow);
-  text-transform: uppercase;
-}
-.qc-tagline.multi { background: var(--fc-blue-100); color: var(--fc-blue-900); }
-.qc-tagline.waived { background: var(--fc-yellow-100); color: var(--fc-yellow-700); }
 
 /* Links inside the shell */
 a.fc-sidebar-link, a.fc-bottom-nav-btn { text-decoration: none; }

@@ -1,6 +1,6 @@
 'use client';
 
-import { Fragment, useCallback, useMemo, useState, useTransition } from 'react';
+import { Fragment, useCallback, useMemo, useState } from 'react';
 import PriceText from './PriceText';
 import QuoteSheetDialog from './QuoteSheetDialog';
 import KcField from './KcField';
@@ -12,7 +12,6 @@ import { deliveryPlan, monthLabel, monthSpan, type CalendarMonth } from '@/lib/p
 import { cents, money, percent, plain } from '@/lib/format';
 import type { QuoteSheetData } from '@/lib/quoteSheet';
 import { draftReference } from '@/lib/quoteSheet';
-import { saveQuote } from '@/app/actions';
 
 interface Props {
   reference: ReferenceData;
@@ -56,8 +55,6 @@ export default function QuoteBuilder({
   const [targetMargin, setTargetMargin] = useState('20');
 
   const [sheet, setSheet] = useState<QuoteSheetData | null>(null);
-  const [saving, startSaving] = useTransition();
-  const [saveMessage, setSaveMessage] = useState<string | null>(null);
 
   // The window is authoritative: the last month cannot precede the first, and
   // the coffee cannot be held longer than the contract actually runs.
@@ -166,19 +163,10 @@ export default function QuoteBuilder({
   }, [result, destination, activeRung, plan, clientName, incoterm, reference, input,
       fromMonth, safeTo, effectiveHold]);
 
-  function onSave(margin: number, priceUsdPerLb: number) {
-    setSaveMessage(null);
-    startSaving(async () => {
-      const res = await saveQuote({
-        input,
-        clientName,
-        chosenMargin: margin,
-        chosenPriceUsdPerLb: priceUsdPerLb,
-        schedule: plan?.months ?? [],
-      });
-      setSaveMessage(res.message);
-    });
-  }
+  /** Adopt a rung: the headline, the schedule and the quote sheet all follow. */
+  const useRung = useCallback((margin: number) => {
+    setMarginInput(String(Number((margin * 100).toFixed(4))));
+  }, []);
 
   const warnings = (result?.warnings ?? []).filter((w) => isAdmin || !w.adminOnly);
 
@@ -466,14 +454,6 @@ export default function QuoteBuilder({
                         {Number(marginInput) / 100 < settings.minMargin && (
                           <div className="qc-verdict is-warn">Under the {marginLabel(settings.minMargin)} floor</div>
                         )}
-                        <div className="qc-actions">
-                          <button
-                            type="button" className="fc-btn fc-btn-primary" disabled={saving}
-                            onClick={() => onSave(activeRung.margin, activeRung.priceUsdPerLb)}
-                          >
-                            Save this quote
-                          </button>
-                        </div>
                       </div>
                     )}
                   </div>
@@ -517,12 +497,10 @@ export default function QuoteBuilder({
                         </div>
                         <div className="qc-actions">
                           <button
-                            type="button"
-                            className={`fc-btn ${solvedFromPrice.belowCost ? 'fc-btn-ghost' : 'fc-btn-primary'}`}
-                            disabled={saving}
-                            onClick={() => onSave(solvedFromPrice.margin, solvedFromPrice.usdPerLb)}
+                            type="button" className="fc-btn fc-btn-ghost"
+                            onClick={() => useRung(solvedFromPrice.margin)}
                           >
-                            Save this quote
+                            Price at this margin
                           </button>
                         </div>
                       </div>
@@ -615,9 +593,15 @@ export default function QuoteBuilder({
                 <div className="qc-ladder-cards">
                   {result.ladder.map((rung, i) => {
                     const isFloor = Math.abs(rung.margin - settings.minMargin) < 1e-9;
+                    const isActive = Math.abs(rung.margin - activeRung.margin) < 1e-9;
                     const step = i === 0 ? null : rung.displayPrice - result.ladder[i - 1].displayPrice;
                     return (
-                      <div className={`qc-rung${isFloor ? ' is-floor' : ''}`} key={rung.margin}>
+                      <button
+                        type="button"
+                        className={`qc-rung${isActive ? ' is-active' : isFloor ? ' is-floor' : ''}`}
+                        key={rung.margin}
+                        onClick={() => useRung(rung.margin)}
+                      >
                         <span className="qc-rung-margin">
                           {marginLabel(rung.margin)}
                           {isFloor && <span className="qc-floorbadge">Floor</span>}
@@ -630,7 +614,7 @@ export default function QuoteBuilder({
                           <span>KC +{cents(rung.priceUsdPerLb - input.kcUsdPerLb)}</span>
                           <span>{money(totalInQuoteCurrency(rung.totalValueUsd, destination.quoteCurrency, reference.fx), destination.quoteCurrency, 0)}</span>
                         </span>
-                      </div>
+                      </button>
                     );
                   })}
                 </div>
@@ -651,9 +635,10 @@ export default function QuoteBuilder({
                     <tbody>
                       {result.ladder.map((rung, i) => {
                         const isFloor = Math.abs(rung.margin - settings.minMargin) < 1e-9;
+                        const isActive = Math.abs(rung.margin - activeRung.margin) < 1e-9;
                         const step = i === 0 ? null : rung.displayPrice - result.ladder[i - 1].displayPrice;
                         return (
-                          <tr key={rung.margin} className={isFloor ? 'qc-row-floor' : ''}>
+                          <tr key={rung.margin} className={isActive ? 'qc-row-active' : isFloor ? 'qc-row-floor' : ''}>
                             <td>
                               <span className="qc-marginpct">{marginLabel(rung.margin)}</span>
                               {isFloor && <span className="qc-floorbadge">Floor</span>}
@@ -674,12 +659,12 @@ export default function QuoteBuilder({
                             </td>
                             <td style={{ textAlign: 'right' }}>
                               <button
-                                type="button" className="fc-btn fc-btn-ghost"
+                                type="button"
+                                className={`fc-btn ${isActive ? 'fc-btn-navy' : 'fc-btn-ghost'}`}
                                 style={{ padding: '5px 11px', fontSize: 10 }}
-                                disabled={saving}
-                                onClick={() => onSave(rung.margin, rung.priceUsdPerLb)}
+                                onClick={() => useRung(rung.margin)}
                               >
-                                Save
+                                {isActive ? 'In use' : 'Use'}
                               </button>
                             </td>
                           </tr>
@@ -688,9 +673,6 @@ export default function QuoteBuilder({
                     </tbody>
                   </table>
                 </div>
-                {saveMessage && (
-                  <p className="qc-footnote" style={{ color: 'var(--fc-success)' }}>{saveMessage}</p>
-                )}
               </section>
 
               {/* delivery schedule */}

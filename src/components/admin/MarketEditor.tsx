@@ -177,20 +177,20 @@ export function FxEditor({ rows, locked }: { rows: FxRow[]; locked: boolean }) {
                   <td style={{ color: 'var(--fc-ink-500)', whiteSpace: 'normal' }}>{r.source}</td>
                   <td style={{ color: 'var(--fc-ink-500)' }}>{shortDate(r.fetchedAt)}</td>
                   <td>
-                    <input
+                    <label className="qc-check"><input
                       type="checkbox" name={`fx_pin_${r.currency}`}
                       checked={pins[r.currency] ?? false} disabled={locked}
                       aria-label={`Pin ${r.currency}`}
                       onChange={(e) => setPins((p) => ({ ...p, [r.currency]: e.target.checked }))}
-                    />
+                    /></label>
                   </td>
                   <td>
-                    <input
+                    <label className="qc-check"><input
                       type="checkbox" name={`fx_clear_${r.currency}`}
                       checked={clears[r.currency] ?? false} disabled={locked || !r.isOverride}
                       aria-label={`Release ${r.currency}`}
                       onChange={(e) => setClears((c) => ({ ...c, [r.currency]: e.target.checked }))}
-                    />
+                    /></label>
                   </td>
                 </tr>
               );

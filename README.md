@@ -43,8 +43,8 @@ each shipment, blends by volume, and reverse-solves a single blended price back 
 
 **Rates & costs** (admin) — every figure a quote is built from. See below.
 
-**History** — every saved quote with the KC, the rates and the whole cost table stamped as they
-stood, so any number can be explained later.
+Quotes are not stored. This prices and exports; it does not keep a book. The deliverable is the
+downloaded quote sheet.
 
 ## Who sees what
 
@@ -152,6 +152,8 @@ The app seeds itself on first boot, so a fresh checkout comes up with the sheet 
   loads.
 - **Multi-shipment shares one hold period.** Per-shipment holds would need a column per row.
 - **Quality tiers.** Premiums carry a `quality_key` column but only a `standard` tier is exposed.
+- **No quote history.** Removed by request — the calculator prices and exports rather than keeping a
+  book. The admin audit log still records every change to the rate and cost tables.
 
 ## Layout
 
@@ -159,7 +161,7 @@ The app seeds itself on first boot, so a fresh checkout comes up with the sheet 
 src/lib/pricing/   engine.ts (pure, tested), schedule.ts, units.ts, types.ts, reference.ts
 src/lib/db/        schema.sql, accessors, seed
 src/lib/           kcFeed.ts, fx.ts, auth.ts, quoteSheet.ts, format.ts
-src/app/           quote, /multi, /admin, /quotes, /api/kc/latest, server actions
+src/app/           quote, /multi, /admin, /api/kc/latest, server actions
 src/components/    QuoteBuilder, MultiShipmentBuilder, shell, admin editors
 ```
 
@@ -169,9 +171,9 @@ trusted.
 
 ## Deployment
 
-State lives in SQLite at `data/calculator.db` (override with `DATABASE_PATH`). That needs a
-persistent disk, so a long-running Node host or container suits it; a serverless platform with an
-ephemeral filesystem would lose the quote history and any rate edits between invocations.
+The rate and cost tables live in SQLite at `data/calculator.db` (override with `DATABASE_PATH`).
+That needs a persistent disk, so a long-running Node host or container suits it; a serverless
+platform with an ephemeral filesystem would lose every rate edit between invocations.
 
 `fonts.googleapis.com`, `datos.gov.co`, `api.frankfurter.app` and the KC feed hosts must be
 reachable from wherever it runs.

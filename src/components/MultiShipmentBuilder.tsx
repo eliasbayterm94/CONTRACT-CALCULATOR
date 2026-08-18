@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useMemo, useState, useTransition } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import NumberInput from './NumberInput';
 import PriceText from './PriceText';
 import QuoteSheetDialog from './QuoteSheetDialog';
@@ -10,7 +10,6 @@ import { PRICE_DP, UNIT_LABEL, ceilPrice, fromQuoteUnit, toQuoteUnit, totalInQuo
 import { monthLabel, monthSpan, type CalendarMonth } from '@/lib/pricing/schedule';
 import { cents, money, percent, plain } from '@/lib/format';
 import { draftReference, type QuoteSheetData } from '@/lib/quoteSheet';
-import { saveContract } from '@/app/actions';
 
 const marginLabel = (m: number) => `${(m * 100).toFixed((m * 100) % 1 === 0 ? 0 : 1)}%`;
 
@@ -38,8 +37,6 @@ export default function MultiShipmentBuilder({
   const [margin, setMargin] = useState('16');
   const [target, setTarget] = useState('');
   const [sheet, setSheet] = useState<QuoteSheetData | null>(null);
-  const [saving, startSaving] = useTransition();
-  const [saveMessage, setSaveMessage] = useState<string | null>(null);
 
   const [shipments, setShipments] = useState<Shipment[]>([
     { id: 's1', label: monthLabel(months[0]?.key ?? ''), kcCents: 185.5, bags: 280 },
@@ -150,14 +147,6 @@ export default function MultiShipmentBuilder({
       },
     };
   }, [contract, destination, clientName, incoterm, reference, processKey, packagingKey, fromMonth, safeTo, effectiveHold]);
-
-  function onSave() {
-    setSaveMessage(null);
-    startSaving(async () => {
-      const res = await saveContract({ base, shipments, margin: marginValue, clientName });
-      setSaveMessage(res.message);
-    });
-  }
 
   const inQuote = (usd: number) =>
     destination ? totalInQuoteCurrency(usd, destination.quoteCurrency, reference.fx) : usd;
@@ -442,12 +431,6 @@ export default function MultiShipmentBuilder({
                   {marginValue < settings.minMargin && (
                     <div className="qc-verdict is-warn">Under the {marginLabel(settings.minMargin)} floor</div>
                   )}
-                  <div className="qc-actions">
-                    <button type="button" className="fc-btn fc-btn-primary" disabled={saving} onClick={onSave}>
-                      Save all shipments
-                    </button>
-                  </div>
-                  {saveMessage && <p className="qc-answer-meta" style={{ color: 'var(--fc-success)' }}>{saveMessage}</p>}
                 </div>
               </div>
             </section>

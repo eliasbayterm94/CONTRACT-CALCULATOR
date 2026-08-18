@@ -157,20 +157,20 @@ export default function CostLinesEditor({
                     )}
                   </td>
                   <td>
-                    <input
+                    <label className="qc-check"><input
                       type="checkbox" name={`cl_margin_${line.key}`}
                       checked={line.isMargin} disabled={locked}
                       aria-label={`${line.label} counts as margin`}
                       onChange={(e) => update(line.key, 'isMargin', e.target.checked)}
-                    />
+                    /></label>
                   </td>
                   <td>
-                    <input
+                    <label className="qc-check"><input
                       type="checkbox" name={`cl_active_${line.key}`}
                       checked={line.active} disabled={locked}
                       aria-label={`${line.label} active`}
                       onChange={(e) => update(line.key, 'active', e.target.checked)}
-                    />
+                    /></label>
                   </td>
                   <td>
                     <button

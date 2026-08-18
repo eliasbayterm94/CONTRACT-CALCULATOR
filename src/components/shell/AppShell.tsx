@@ -23,12 +23,6 @@ const LayersIcon = (
     <path d="M8 3v18" />
   </svg>
 );
-const ClockIcon = (
-  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
-    <circle cx="12" cy="12" r="9" />
-    <path d="M12 8v4l3 2" />
-  </svg>
-);
 const SlidersIcon = (
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
     <path d="M4 6h16M4 12h16M4 18h10" />
@@ -38,7 +32,6 @@ const SlidersIcon = (
 const TRADING: NavItem[] = [
   { href: '/', label: 'New quote', icon: ChartIcon },
   { href: '/multi', label: 'Multi-shipment', icon: LayersIcon, adminOnly: true },
-  { href: '/quotes', label: 'Quote history', icon: ClockIcon },
 ];
 
 const ADMIN: NavItem[] = [{ href: '/admin', label: 'Rates & costs', icon: SlidersIcon }];
