@@ -1489,6 +1489,37 @@ tfoot.qc-total td { border-top: 2px solid var(--fc-navy); font-weight: var(--fc-
   font-size: 11px; color: var(--fc-ink-500); line-height: 1.55; background: var(--fc-cream);
 }
 
+/* ── Loading ───────────────────────────────────────────────────────── */
+.fc-skel { padding: 0; }
+.fc-skel-sr {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+}
+.fc-skel-split { display: grid; grid-template-columns: minmax(0, 340px) minmax(0, 1fr); gap: 14px; }
+@media (max-width: 1023px) { .fc-skel-split { grid-template-columns: minmax(0, 1fr); } }
+
+.fc-skel-panel {
+  background: #fff; border: 1px solid var(--fc-ink-100);
+  border-radius: var(--fc-radius-4); padding: 18px 16px; margin-bottom: 14px;
+}
+.fc-skel-bar {
+  height: 13px; border-radius: var(--fc-radius-2); margin-bottom: 11px;
+  background: linear-gradient(90deg, #eeede7 25%, #f7f6f1 37%, #eeede7 63%);
+  background-size: 400% 100%;
+  animation: fc-skel-sweep 1.3s ease-in-out infinite;
+}
+.fc-skel-bar:last-child { margin-bottom: 0; }
+.fc-skel-bar.is-short { width: 62%; }
+.fc-skel-title { height: 10px; width: 38%; margin-bottom: 18px; background-color: #e4e3db; }
+
+@keyframes fc-skel-sweep {
+  0% { background-position: 100% 50%; }
+  100% { background-position: 0 50%; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .fc-skel-bar { animation: none; background: #eeede7; }
+}
+
 /* ── Checking the arithmetic ───────────────────────────────────────── */
 .qc-working-toggle { min-height: 34px; font-size: 11px; }
 .qc-working-toggle.is-on {

@@ -92,6 +92,7 @@ export default function AppShell({
               <Link
                 key={item.href}
                 href={item.href}
+                prefetch
                 className={`fc-sidebar-link${pathname === item.href ? ' active' : ''}`}
               >
                 {item.icon}
@@ -106,6 +107,7 @@ export default function AppShell({
                 <Link
                   key={item.href}
                   href={item.href}
+                  prefetch
                   className={`fc-sidebar-link${pathname === item.href ? ' active' : ''}`}
                 >
                   {item.icon}
@@ -117,7 +119,7 @@ export default function AppShell({
           {!admin && (
             <div className="fc-sidebar-section">
               <div className="fc-sidebar-section-label">Admin</div>
-              <Link href="/admin" className="fc-sidebar-link">
+              <Link href="/admin" prefetch className="fc-sidebar-link">
                 {SlidersIcon}
                 <span className="label">Sign in</span>
               </Link>
@@ -157,6 +159,7 @@ export default function AppShell({
               <Link
                 key={item.href}
                 href={item.href}
+                prefetch
                 className={`fc-bottom-nav-btn${pathname === item.href ? ' active' : ''}`}
               >
                 {item.icon}
