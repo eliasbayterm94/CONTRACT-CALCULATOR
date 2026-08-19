@@ -179,6 +179,59 @@ export interface CostLineResult {
   included: boolean;
   /** Why the line was left out, for the breakdown. */
   excludedReason?: string;
+  /** Every operand that produced `usdPerLb`, so the figure can be checked. */
+  trace: CostLineTrace;
+}
+
+/**
+ * The working behind one cost line.
+ *
+ * A breakdown that shows only the answer cannot be audited — a wrong divisor
+ * and a wrong rate look identical once they are multiplied together. These are
+ * the operands, kept so the admin view can lay the arithmetic out in full.
+ */
+export interface CostLineTrace {
+  basis: CostLine['basis'];
+  /** Which table the amount was read from. */
+  source: 'Fixed' | 'Packaging' | 'Process' | 'Destination';
+  /** Pounds the native amount covers. Zero for per-lb and rate lines. */
+  lbsPerUnit: number;
+  /** Native currency per pound, before any month multiplier. */
+  nativePerLbPerMonth: number;
+  /** 1 unless the line is billed for each month the contract is held. */
+  monthsApplied: number;
+  /** USD per unit of this line's currency. 1 for USD. */
+  fxUsdPerUnit: number;
+  /** Rate lines only: the monthly rate and the cargo value it was charged on. */
+  rate?: { monthlyRate: number; months: number; chargedOnUsdPerLb: number };
+}
+
+/** One line of the cost-to-price derivation. */
+export interface PriceStep {
+  label: string;
+  /** The arithmetic that produced `value`, operands already substituted. */
+  detail: string;
+  value: number;
+  kind: 'usdPerLb' | 'quotePrice' | 'ratio' | 'usdTotal';
+}
+
+/**
+ * An independent re-addition of the breakdown.
+ *
+ * The engine accumulates the total as it walks the lines; this adds the
+ * published lines back up separately and compares. A mismatch means a cost was
+ * counted into the total without appearing in the table, or the reverse.
+ */
+export interface Reconciliation {
+  greenCoffeeUsdPerLb: number;
+  /** Every included line, finance included, added back up. */
+  includedLinesUsdPerLb: number;
+  /** Green coffee plus those lines. */
+  rebuiltTotalUsdPerLb: number;
+  /** What the engine reported. */
+  reportedTotalUsdPerLb: number;
+  differenceUsdPerLb: number;
+  matches: boolean;
 }
 
 export interface MarginRung {

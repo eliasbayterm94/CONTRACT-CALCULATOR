@@ -23,14 +23,20 @@ export default function SaveBar({
   const { pending } = useFormStatus();
   const dirty = dirtyCount > 0;
 
+  const edits = `${dirtyCount} unsaved change${dirtyCount === 1 ? '' : 's'}`;
+
+  // What the server said outranks the edit count. A save that comes back while
+  // the form is still dirty is exactly the case worth seeing — it means the
+  // save did not take the change with it — and showing only "1 unsaved change"
+  // is how that stayed invisible.
   const status = locked
     ? { text: 'Sign in to edit.', tone: '' }
     : pending
       ? { text: 'Saving…', tone: '' }
-      : dirty
-        ? { text: `${dirtyCount} unsaved change${dirtyCount === 1 ? '' : 's'}`, tone: 'is-dirty' }
-        : state
-          ? { text: state.message, tone: state.ok ? 'is-ok' : 'is-bad' }
+      : state
+        ? { text: dirty ? `${state.message} ${edits} still open.` : state.message, tone: state.ok && !dirty ? 'is-ok' : dirty ? 'is-dirty' : 'is-bad' }
+        : dirty
+          ? { text: edits, tone: 'is-dirty' }
           : { text: 'No changes.', tone: '' };
 
   return (

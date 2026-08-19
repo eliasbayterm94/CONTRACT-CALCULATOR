@@ -101,19 +101,16 @@ export function FxEditor({ rows, locked }: { rows: FxRow[]; locked: boolean }) {
   const basePins = () => Object.fromEntries(editable.map((r) => [r.currency, r.isOverride]));
   const [values, setValues] = useState<Record<string, string>>(baseValues);
   const [pins, setPins] = useState<Record<string, boolean>>(basePins);
-  const [clears, setClears] = useState<Record<string, boolean>>({});
 
   const savedJson = JSON.stringify(editable.map((r) => [r.currency, r.usdPerUnit, r.isOverride]));
   useEffect(() => {
     setValues(baseValues());
     setPins(basePins());
-    setClears({});
     /* eslint-disable-next-line react-hooks/exhaustive-deps */
   }, [savedJson]);
   const dirty =
     editable.filter((r) => values[r.currency] !== shown(r).toFixed(r.currency === 'COP' ? 2 : 4)).length +
-    editable.filter((r) => pins[r.currency] !== r.isOverride).length +
-    Object.values(clears).filter(Boolean).length;
+    editable.filter((r) => pins[r.currency] !== r.isOverride).length;
 
   return (
     <form action={formAction}>
@@ -141,14 +138,17 @@ export function FxEditor({ rows, locked }: { rows: FxRow[]; locked: boolean }) {
       </div>
       <div className="qc-impact">
         <span>TRM from Banco de la República, the rest from the ECB.</span>
-        <span>A pinned rate is never overwritten by a fetch — use it to quote against a booked forward.</span>
+        <span>
+          A pinned rate is yours and survives every fetch — use it to quote against a booked forward.
+          Untick the pin to hand the row back to the feed.
+        </span>
       </div>
       <div className="qc-table-wrap">
         <table className="qc-table">
           <thead>
             <tr>
               <th>Currency</th><th className="qc-num">Rate</th><th className="qc-num">USD per unit</th>
-              <th>Source</th><th>Fetched</th><th>Pin</th><th>Release</th>
+              <th>Source</th><th>Fetched</th><th>Pinned</th>
             </tr>
           </thead>
           <tbody>
@@ -170,7 +170,13 @@ export function FxEditor({ rows, locked }: { rows: FxRow[]; locked: boolean }) {
                       type="number" step="any" min={0} inputMode="decimal"
                       value={values[r.currency] ?? ''} disabled={locked}
                       aria-label={`${r.currency} rate`}
-                      onChange={(e) => setValues((v) => ({ ...v, [r.currency]: e.target.value }))}
+                      onChange={(e) => {
+                        setValues((v) => ({ ...v, [r.currency]: e.target.value }));
+                        // Typing a rate is what pinning means. Leaving the box
+                        // and the pin out of step is how a typed rate used to
+                        // get thrown away on save.
+                        setPins((p) => ({ ...p, [r.currency]: true }));
+                      }}
                     />
                   </td>
                   <td className="qc-num qc-derived">{r.usdPerUnit.toPrecision(6)}</td>
@@ -182,14 +188,6 @@ export function FxEditor({ rows, locked }: { rows: FxRow[]; locked: boolean }) {
                       checked={pins[r.currency] ?? false} disabled={locked}
                       aria-label={`Pin ${r.currency}`}
                       onChange={(e) => setPins((p) => ({ ...p, [r.currency]: e.target.checked }))}
-                    /></label>
-                  </td>
-                  <td>
-                    <label className="qc-check"><input
-                      type="checkbox" name={`fx_clear_${r.currency}`}
-                      checked={clears[r.currency] ?? false} disabled={locked || !r.isOverride}
-                      aria-label={`Release ${r.currency}`}
-                      onChange={(e) => setClears((c) => ({ ...c, [r.currency]: e.target.checked }))}
                     /></label>
                   </td>
                 </tr>

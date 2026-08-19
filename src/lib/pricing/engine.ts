@@ -2,20 +2,25 @@ import type {
   ContractResult,
   CostLine,
   CostLineResult,
+  CostLineTrace,
   Destination,
   EngineSettings,
   MarginRung,
   PackagingType,
+  PriceStep,
   ProcessType,
   QuoteInput,
   QuoteResult,
   QuoteWarning,
+  Reconciliation,
   ReferenceData,
   Shipment,
   ShipmentResult,
 } from './types';
 import {
   DEFAULT_LBS_PER_CONTAINER,
+  LB_PER_KG,
+  LB_PER_MT,
   ceilPrice,
   fromQuoteUnit,
   toQuoteUnit,
@@ -216,6 +221,14 @@ export function calculateQuote(input: QuoteInput, ref: ReferenceData): QuoteResu
         isMargin: line.isMargin,
         included,
         excludedReason,
+        trace: {
+          basis: 'rate',
+          source: SOURCE_OF[line.driver ?? 'fixed'],
+          lbsPerUnit: 0,
+          nativePerLbPerMonth: 0,
+          monthsApplied: months,
+          fxUsdPerUnit: 1,
+        },
       });
       if (included) financeIndex = lines.length - 1;
       continue;
@@ -260,6 +273,14 @@ export function calculateQuote(input: QuoteInput, ref: ReferenceData): QuoteResu
       isMargin: line.isMargin,
       included,
       excludedReason,
+      trace: {
+        basis: line.basis,
+        source: SOURCE_OF[line.driver ?? 'fixed'],
+        lbsPerUnit: line.basis === 'per_unit' ? resolved.lbs : 0,
+        nativePerLbPerMonth: perUnit,
+        monthsApplied: line.perMonth ? months : 1,
+        fxUsdPerUnit: fx[resolved.currency] ?? Number.NaN,
+      },
     });
   }
 
@@ -274,9 +295,14 @@ export function calculateQuote(input: QuoteInput, ref: ReferenceData): QuoteResu
   // spent getting it there — not just the logistics differential.
   let financeUsdPerLb = 0;
   if (financeIndex >= 0) {
-    financeUsdPerLb =
-      settings.financeMonthlyRate * months * (greenCoffeeUsdPerLb + differentialUsdPerLb);
+    const chargedOn = greenCoffeeUsdPerLb + differentialUsdPerLb;
+    financeUsdPerLb = settings.financeMonthlyRate * months * chargedOn;
     lines[financeIndex].usdPerLb = financeUsdPerLb;
+    lines[financeIndex].trace.rate = {
+      monthlyRate: settings.financeMonthlyRate,
+      months,
+      chargedOnUsdPerLb: chargedOn,
+    };
   }
 
   const totalCostUsdPerLb = greenCoffeeUsdPerLb + differentialUsdPerLb + financeUsdPerLb;
@@ -339,6 +365,139 @@ export function calculateQuote(input: QuoteInput, ref: ReferenceData): QuoteResu
     ladder: ladderMargins.map(rung),
     warnings,
   };
+}
+
+/** Which reference table a line's amount came from, for the audit view. */
+const SOURCE_OF: Record<string, CostLineTrace['source']> = {
+  fixed: 'Fixed',
+  packaging: 'Packaging',
+  process: 'Process',
+  destination: 'Destination',
+};
+
+/**
+ * Add the published lines back up and compare to the reported total.
+ *
+ * calculateQuote accumulates its total while walking the lines, so a cost that
+ * reached the total without reaching the table — or the reverse — would not
+ * show up anywhere. This adds the table up on its own and says whether the two
+ * agree.
+ */
+export function reconcile(result: QuoteResult): Reconciliation {
+  const includedLinesUsdPerLb = result.lines
+    .filter((line) => line.included)
+    .reduce((sum, line) => sum + line.usdPerLb, 0);
+  const rebuiltTotalUsdPerLb = result.greenCoffeeUsdPerLb + includedLinesUsdPerLb;
+  const differenceUsdPerLb = rebuiltTotalUsdPerLb - result.totalCostUsdPerLb;
+  return {
+    greenCoffeeUsdPerLb: result.greenCoffeeUsdPerLb,
+    includedLinesUsdPerLb,
+    rebuiltTotalUsdPerLb,
+    reportedTotalUsdPerLb: result.totalCostUsdPerLb,
+    differenceUsdPerLb,
+    // A tenth of a millionth of a cent per pound: floating-point noise, not a
+    // costing error. On a full container that is under a thousandth of a cent.
+    matches: Math.abs(differenceUsdPerLb) < 1e-9,
+  };
+}
+
+const n = (value: number, digits = 4): string =>
+  Number.isFinite(value)
+    ? value.toLocaleString('en-US', { minimumFractionDigits: digits, maximumFractionDigits: digits })
+    : '—';
+
+/**
+ * Every step from break-even cost to the price the client is shown.
+ *
+ * Written out so the numbers can be checked by hand: each step names its
+ * operands, and the last steps show what the rounding cost — the quoted price
+ * is rounded up, so the margin actually earned is a little above the one asked
+ * for, and the contract value follows the rounded price rather than the raw
+ * one.
+ */
+export function explainRung(
+  rung: MarginRung,
+  result: QuoteResult,
+  settings: EngineSettings,
+  fx: ReferenceData['fx'],
+): PriceStep[] {
+  const cost = result.totalCostUsdPerLb;
+  const base = result.marginBaseUsdPerLb;
+  const excluded = result.lines
+    .filter((line) => line.included && line.isMargin)
+    .reduce((sum, line) => sum + line.usdPerLb, 0);
+  const raw = priceAtMargin(rung.margin, cost, base, settings.marginMode);
+  const inQuoteUnit = toQuoteUnit(raw, result.quoteCurrency, result.quoteUnit, fx);
+  const perLbFactor =
+    result.quoteUnit === 'lb' ? 1 : result.quoteUnit === 'kg' ? LB_PER_KG : LB_PER_MT;
+  const rate = fx[result.quoteCurrency] ?? Number.NaN;
+
+  const steps: PriceStep[] = [
+    {
+      label: 'Break-even cost',
+      detail: `green coffee ${n(result.greenCoffeeUsdPerLb)} + differential ${n(result.differentialUsdPerLb)} + finance ${n(result.financeUsdPerLb)}`,
+      value: cost,
+      kind: 'usdPerLb',
+    },
+    {
+      label: 'Margin base',
+      detail:
+        settings.marginBase === 'full_landed_cost'
+          ? excluded > 0
+            ? `the full cost ${n(cost)} less ${n(excluded)} of lines flagged as margin`
+            : `the full break-even cost, no lines flagged as margin`
+          : `differential ${n(result.differentialUsdPerLb)} + finance ${n(result.financeUsdPerLb)}${excluded > 0 ? ` less ${n(excluded)} flagged as margin` : ''}`,
+      value: base,
+      kind: 'usdPerLb',
+    },
+    {
+      label: `Price at ${(rung.margin * 100).toFixed(2)}%`,
+      detail:
+        settings.marginMode === 'on_cost'
+          ? `markup: ${n(cost)} + ${(rung.margin * 100).toFixed(2)}% x ${n(base)}`
+          : `gross margin: ${n(cost)} - ${n(base)} + ${n(base)} / (1 - ${rung.margin.toFixed(4)})`,
+      value: raw,
+      kind: 'usdPerLb',
+    },
+  ];
+
+  if (result.quoteUnit !== 'lb' || result.quoteCurrency !== 'USD') {
+    steps.push({
+      label: `In ${result.quoteCurrency} per ${result.quoteUnit}`,
+      detail: `${n(raw)} x ${n(perLbFactor, 6)} lb per ${result.quoteUnit} / ${n(rate, 6)} USD per ${result.quoteCurrency}`,
+      value: inQuoteUnit,
+      kind: 'quotePrice',
+    });
+  }
+
+  steps.push(
+    {
+      label: 'Rounded up, 2 decimals',
+      detail: `${n(inQuoteUnit)} rounded up, never down, so the quote cannot land under the computed price`,
+      value: rung.displayPrice,
+      kind: 'quotePrice',
+    },
+    {
+      label: 'That price back in USD/lb',
+      detail: 'everything below is derived from the rounded price, so the client can multiply it out',
+      value: rung.priceUsdPerLb,
+      kind: 'usdPerLb',
+    },
+    {
+      label: 'Margin actually earned',
+      detail: `${n(rung.priceUsdPerLb)} against cost ${n(cost)} — rounding up adds ${n(rung.priceUsdPerLb - raw, 6)}/lb`,
+      value: marginAtPrice(rung.priceUsdPerLb, cost, base, settings.marginMode),
+      kind: 'ratio',
+    },
+    {
+      label: 'Contract value',
+      detail: `${n(rung.priceUsdPerLb)} x ${n(result.totalLbs, 1)} lb (${result.bags} bags)`,
+      value: rung.totalValueUsd,
+      kind: 'usdTotal',
+    },
+  );
+
+  return steps;
 }
 
 /** Price a quote at an arbitrary margin, outside the published ladder. */

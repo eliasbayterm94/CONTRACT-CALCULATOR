@@ -5,8 +5,25 @@ import PriceText from './PriceText';
 import QuoteSheetDialog from './QuoteSheetDialog';
 import KcField from './KcField';
 import NumberInput from './NumberInput';
-import { calculateQuote, cappedHold, kcForTarget, rungAt, solveForPrice } from '@/lib/pricing/engine';
-import { INCOTERMS, type Incoterm, type QuoteInput, type ReferenceData } from '@/lib/pricing/types';
+import {
+  calculateQuote,
+  cappedHold,
+  explainRung,
+  kcForTarget,
+  reconcile,
+  rungAt,
+  solveForPrice,
+} from '@/lib/pricing/engine';
+import {
+  INCOTERMS,
+  type CostLineResult,
+  type CurrencyCode,
+  type Incoterm,
+  type PriceStep,
+  type QuoteInput,
+  type QuoteUnit,
+  type ReferenceData,
+} from '@/lib/pricing/types';
 import { PRICE_DP, UNIT_LABEL, fromQuoteUnit, toQuoteUnit, totalInQuoteCurrency } from '@/lib/pricing/units';
 import { deliveryPlan, monthLabel, monthSpan, type CalendarMonth } from '@/lib/pricing/schedule';
 import { cents, money, percent, plain } from '@/lib/format';
@@ -55,6 +72,12 @@ export default function QuoteBuilder({
   const [targetMargin, setTargetMargin] = useState('20');
 
   const [sheet, setSheet] = useState<QuoteSheetData | null>(null);
+
+  // The audit view. Off by default — the breakdown answers "what does it cost",
+  // this answers "and where did that number come from", which is a different
+  // question and a much longer table.
+  const [showWorking, setShowWorking] = useState(false);
+  const [auditMargin, setAuditMargin] = useState(settings.minMargin);
 
   // The window is authoritative: the last month cannot precede the first, and
   // the coffee cannot be held longer than the contract actually runs.
@@ -169,6 +192,19 @@ export default function QuoteBuilder({
   }, []);
 
   const warnings = (result?.warnings ?? []).filter((w) => isAdmin || !w.adminOnly);
+
+  // Both are cheap, but they only mean anything to an admin looking at the
+  // breakdown, so they are not computed for a trader's render.
+  const audit = useMemo(() => {
+    if (!isAdmin || !result) return null;
+    const rung =
+      result.ladder.find((r) => Math.abs(r.margin - auditMargin) < 1e-9) ?? result.floor;
+    return {
+      check: reconcile(result),
+      rung,
+      steps: explainRung(rung, result, settings, reference.fx),
+    };
+  }, [isAdmin, result, auditMargin, settings, reference.fx]);
 
   return (
     <>
@@ -735,8 +771,39 @@ export default function QuoteBuilder({
                     <h2 className="qc-panel-title">
                       Cost breakdown <span className="qc-adminchip">Admin only</span>
                     </h2>
-                    <span className="qc-panel-note">Never rendered for a trader</span>
+                    <button
+                      type="button"
+                      className={`fc-btn fc-btn-ghost qc-working-toggle${showWorking ? ' is-on' : ''}`}
+                      onClick={() => setShowWorking((on) => !on)}
+                      aria-pressed={showWorking}
+                    >
+                      {showWorking ? 'Hide the arithmetic' : 'Check the arithmetic'}
+                    </button>
                   </div>
+                  {audit && (
+                    <div className={`qc-reconcile${audit.check.matches ? '' : ' is-bad'}`}>
+                      <span className="qc-reconcile-mark" aria-hidden="true">
+                        {audit.check.matches ? '\u2713' : '\u2715'}
+                      </span>
+                      <span>
+                        {audit.check.matches ? (
+                          <>
+                            The lines below add up. Green coffee {cents(audit.check.greenCoffeeUsdPerLb)} +
+                            every included line {cents(audit.check.includedLinesUsdPerLb)} ={' '}
+                            {cents(audit.check.rebuiltTotalUsdPerLb)}, which is the total the ladder was
+                            priced from.
+                          </>
+                        ) : (
+                          <>
+                            The lines below do not add up to the total used for pricing. Adding them back
+                            gives {cents(audit.check.rebuiltTotalUsdPerLb)} against a reported{' '}
+                            {cents(audit.check.reportedTotalUsdPerLb)} — a gap of{' '}
+                            {cents(audit.check.differenceUsdPerLb, 4)}/lb. Do not quote from this.
+                          </>
+                        )}
+                      </span>
+                    </div>
+                  )}
                   <div className="qc-table-wrap">
                     <table className="qc-table">
                       <thead>
@@ -755,6 +822,14 @@ export default function QuoteBuilder({
                           <td className="qc-num">{cents(input.kcUsdPerLb)}</td>
                           <td className="qc-num">{percent(input.kcUsdPerLb / result.totalCostUsdPerLb, 0)}</td>
                         </tr>
+                        {showWorking && (
+                          <tr className="qc-trace-row">
+                            <td colSpan={7}>
+                              {plain(input.kcUsdPerLb * 100, 2)}&cent;/lb entered at the top of the quote
+                              &divide; 100 = {plain(input.kcUsdPerLb, 6)} USD/lb
+                            </td>
+                          </tr>
+                        )}
                         <tr>
                           <td>Quality premium</td><td>Market</td>
                           <td className="qc-num">{cents(input.premiumUsdPerLb)}</td><td className="qc-num">—</td>
@@ -762,6 +837,14 @@ export default function QuoteBuilder({
                           <td className="qc-num">{cents(input.premiumUsdPerLb)}</td>
                           <td className="qc-num">{percent(input.premiumUsdPerLb / result.totalCostUsdPerLb, 0)}</td>
                         </tr>
+                        {showWorking && (
+                          <tr className="qc-trace-row">
+                            <td colSpan={7}>
+                              {plain(input.premiumUsdPerLb * 100, 2)}&cent;/lb set for this month under
+                              KC &amp; premiums &divide; 100 = {plain(input.premiumUsdPerLb, 6)} USD/lb
+                            </td>
+                          </tr>
+                        )}
                         {result.lines.map((line, i) => {
                           const prev = result.lines[i - 1];
                           const newGroup = !prev || prev.group !== line.group;
@@ -788,6 +871,16 @@ export default function QuoteBuilder({
                                 <td className="qc-num">{line.included ? cents(line.usdPerLb, 3) : '—'}</td>
                                 <td className="qc-num">{line.included ? percent(line.usdPerLb / result.totalCostUsdPerLb, 1) : '—'}</td>
                               </tr>
+                              {showWorking && (
+                                <tr className="qc-trace-row">
+                                  <td colSpan={7}>
+                                    <span className="qc-trace-source">{line.trace.source}</span>
+                                    {line.included
+                                      ? lineWorking(line)
+                                      : `Left out — ${line.excludedReason ?? 'not applicable'}. Had it counted: ${lineWorking(line)}`}
+                                  </td>
+                                </tr>
+                              )}
                             </Fragment>
                           );
                         })}
@@ -806,6 +899,39 @@ export default function QuoteBuilder({
                       </tfoot>
                     </table>
                   </div>
+                  {showWorking && audit && (
+                    <div className="qc-working">
+                      <div className="qc-working-head">
+                        <h3 className="qc-working-title">From cost to quoted price</h3>
+                        <label className="qc-working-pick">
+                          <span>At</span>
+                          <select
+                            className="qc-input"
+                            value={auditMargin}
+                            onChange={(e) => setAuditMargin(Number(e.target.value))}
+                            aria-label="Margin to trace"
+                          >
+                            {result.ladder.map((r) => (
+                              <option key={r.margin} value={r.margin}>{marginLabel(r.margin)}</option>
+                            ))}
+                          </select>
+                        </label>
+                      </div>
+                      <ol className="qc-derive-list">
+                        {audit.steps.map((step, i) => (
+                          <li key={step.label} className="qc-derive">
+                            <span className="qc-derive-no">{i + 1}</span>
+                            <span className="qc-derive-body">
+                              <span className="qc-derive-label">{step.label}</span>
+                              <span className="qc-derive-detail">{step.detail}</span>
+                            </span>
+                            <span className="qc-derive-value">{stepValue(step, result.quoteCurrency, result.quoteUnit)}</span>
+                          </li>
+                        ))}
+                      </ol>
+                    </div>
+                  )}
+
                   <p className="qc-footnote">
                     {cents(result.copExposureUsdPerLb)}/lb of the differential is peso-denominated —{' '}
                     {percent(result.copExposureUsdPerLb / (result.differentialUsdPerLb || 1), 0)} of it. At a TRM of{' '}
@@ -836,6 +962,41 @@ export default function QuoteBuilder({
       <QuoteSheetDialog data={sheet} onClose={() => setSheet(null)} />
     </>
   );
+}
+
+/**
+ * One cost line's arithmetic, written the way it would be checked by hand:
+ * the amount as it is stored in admin, the divisor, the months, the rate.
+ */
+function lineWorking(line: CostLineResult): string {
+  const t = line.trace;
+
+  if (t.basis === 'rate') {
+    if (!t.rate) return 'A rate on the cargo value. Not charged on this quote.';
+    return (
+      `${percent(t.rate.monthlyRate, 2)} per month x ${t.rate.months} ` +
+      `month${t.rate.months === 1 ? '' : 's'} x ${plain(t.rate.chargedOnUsdPerLb, 4)} USD/lb of cargo ` +
+      `(the coffee plus every other included line) = ${plain(line.usdPerLb, 6)} USD/lb`
+    );
+  }
+
+  const digits = Math.abs(line.nativeAmount) >= 1000 ? 0 : Math.abs(line.nativeAmount) >= 1 ? 2 : 4;
+  const parts: string[] = [
+    t.basis === 'per_unit'
+      ? `${plain(line.nativeAmount, digits)} ${line.currency} / ${plain(t.lbsPerUnit, 1)} lb`
+      : `${plain(line.nativeAmount, 4)} ${line.currency} per lb`,
+  ];
+  if (t.monthsApplied !== 1) parts.push(`x ${t.monthsApplied} month${t.monthsApplied === 1 ? '' : 's'} held`);
+  if (line.currency !== 'USD') parts.push(`x ${plain(t.fxUsdPerUnit, 6)} USD per ${line.currency}`);
+  return `${parts.join(' ')} = ${plain(line.included ? line.usdPerLb : 0, 6)} USD/lb`;
+}
+
+/** A derivation step in whichever unit that step happens to be in. */
+function stepValue(step: PriceStep, currency: CurrencyCode, unit: QuoteUnit): string {
+  if (step.kind === 'ratio') return percent(step.value, 2);
+  if (step.kind === 'usdTotal') return money(step.value, 'USD', 0);
+  if (step.kind === 'quotePrice') return `${money(step.value, currency, PRICE_DP)}/${UNIT_LABEL[unit]}`;
+  return `${plain(step.value, 6)} USD/lb`;
 }
 
 const GROUP_LABEL: Record<string, string> = {

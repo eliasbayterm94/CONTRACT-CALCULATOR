@@ -4,9 +4,11 @@ import {
   calculateContract,
   calculateQuote,
   cappedHold,
+  explainRung,
   kcForTarget,
   marginAtPrice,
   priceAtMargin,
+  reconcile,
   solveForPrice,
 } from './engine';
 import {
@@ -425,5 +427,75 @@ describe('warnings', () => {
 
   it('rejects an unknown destination', () => {
     expect(() => calculateQuote(input({ destinationKey: 'mars' }), ref)).toThrow(/destination/);
+  });
+});
+
+describe('the audit view', () => {
+  it('re-adds the published lines to the reported total', () => {
+    for (const incoterm of ['FOB', 'CIF', 'DDP'] as const) {
+      const result = calculateQuote(input({ incoterm, destinationKey: 'rotterdam', holdMonths: 6 }), ref);
+      const check = reconcile(result);
+      expect(check.matches, `${incoterm} breakdown does not add up`).toBe(true);
+      expect(check.rebuiltTotalUsdPerLb).toBeCloseTo(result.totalCostUsdPerLb, 10);
+    }
+  });
+
+  it('notices when the table and the total disagree', () => {
+    const result = calculateQuote(input({ incoterm: 'DDP' }), ref);
+    const tampered = { ...result, totalCostUsdPerLb: result.totalCostUsdPerLb + 0.01 };
+    expect(reconcile(tampered).matches).toBe(false);
+    expect(reconcile(tampered).differenceUsdPerLb).toBeCloseTo(-0.01, 10);
+  });
+
+  it('traces every line back to the operands that produced it', () => {
+    const result = calculateQuote(input({ incoterm: 'DDP', holdMonths: 5 }), ref);
+    for (const line of result.lines) {
+      if (!line.included || line.trace.basis !== 'per_unit') continue;
+      // amount / lbs per unit x months x fx, exactly as the breakdown claims.
+      const rebuilt =
+        (line.nativeAmount / line.trace.lbsPerUnit) * line.trace.monthsApplied * line.trace.fxUsdPerUnit;
+      expect(rebuilt, `${line.label} does not rebuild from its trace`).toBeCloseTo(line.usdPerLb, 12);
+    }
+  });
+
+  it('shows what the finance rate was charged on', () => {
+    const result = calculateQuote(input({ incoterm: 'DDP', holdMonths: 5 }), ref);
+    const finance = result.lines.find((l) => l.key === 'finance');
+    expect(finance?.included).toBe(true);
+    const rate = finance?.trace.rate;
+    expect(rate).toBeDefined();
+    expect(rate!.months).toBe(3); // 5 held, 2 free
+    // Charged on the whole cargo, not just the logistics differential.
+    expect(rate!.chargedOnUsdPerLb).toBeCloseTo(
+      result.greenCoffeeUsdPerLb + result.differentialUsdPerLb,
+      12,
+    );
+    expect(rate!.monthlyRate * rate!.months * rate!.chargedOnUsdPerLb).toBeCloseTo(
+      finance!.usdPerLb,
+      12,
+    );
+  });
+
+  it('ends the derivation on the same numbers the ladder prints', () => {
+    const result = calculateQuote(input({ destinationKey: 'rotterdam', incoterm: 'DDP' }), ref);
+    const rung = result.floor;
+    const steps = explainRung(rung, result, ref.settings, ref.fx);
+
+    const value = (label: string) => steps.find((s) => s.label.startsWith(label))?.value;
+    expect(value('Break-even')).toBeCloseTo(result.totalCostUsdPerLb, 12);
+    expect(value('Rounded up')).toBe(rung.displayPrice);
+    expect(value('That price back')).toBeCloseTo(rung.priceUsdPerLb, 12);
+    expect(value('Contract value')).toBeCloseTo(rung.totalValueUsd, 6);
+    // Rounding up can only ever help us, never leave us short of the floor.
+    expect(value('Margin actually earned')!).toBeGreaterThanOrEqual(rung.margin);
+  });
+
+  it('names the conversion step only when there is a conversion to make', () => {
+    const ny = calculateQuote(input({ destinationKey: 'ny' }), ref);
+    const rotterdam = calculateQuote(input({ destinationKey: 'rotterdam' }), ref);
+    const labels = (r: typeof ny) =>
+      explainRung(r.floor, r, ref.settings, ref.fx).map((s) => s.label);
+    expect(labels(ny).some((l) => l.startsWith('In '))).toBe(false);
+    expect(labels(rotterdam)).toContain('In EUR per kg');
   });
 });

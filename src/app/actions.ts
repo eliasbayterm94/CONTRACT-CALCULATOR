@@ -15,7 +15,7 @@ import {
   setAdminCode,
   verifyAdminCode,
 } from '@/lib/auth';
-import { logAudit, mutateState, setKcPrice, setPremium, setSetting } from '@/lib/store';
+import { getFxRows, logAudit, mutateState, setKcPrice, setPremium, setSetting } from '@/lib/store';
 import { clearFxOverride, overrideFxRate, refreshFxRates } from '@/lib/fx';
 import type { CurrencyCode, QuoteUnit } from '@/lib/pricing/types';
 import { trmToUsdPerCop } from '@/lib/pricing/units';
@@ -319,17 +319,26 @@ export async function saveFxOverrides(_prev: ActionResult | null, form: FormData
   const g = await guard();
   if ('ok' in g) return g;
   const currencies = form.getAll('fx_key').map(String) as CurrencyCode[];
+  const current = new Map((await getFxRows()).map((row) => [row.currency, row]));
   const pinned: string[] = [];
   const released: string[] = [];
 
+  // The pin is the whole switch. Ticked, the typed rate is held against every
+  // fetch; unticked, the row goes back to whatever the feed last said. An
+  // earlier version required the pin before it would even read the box, so a
+  // typed rate was thrown away without a word — the field simply stayed
+  // different from the stored rate, and the editor said "unsaved" forever.
   for (const currency of currencies) {
     if (currency === 'USD') continue;
-    if (form.get(`fx_clear_${currency}`)) {
-      await clearFxOverride(currency, g.actor);
-      released.push(currency);
+
+    if (!form.get(`fx_pin_${currency}`)) {
+      if (current.get(currency)?.isOverride) {
+        await clearFxOverride(currency, g.actor);
+        released.push(currency);
+      }
       continue;
     }
-    if (!form.get(`fx_pin_${currency}`)) continue;
+
     const typed = num(form, `fx_value_${currency}`);
     if (typed <= 0) return { ok: false, message: `${currency} rate must be greater than zero.` };
     // TRM is typed the way a trader says it — pesos per dollar — and stored inverted.
@@ -340,6 +349,6 @@ export async function saveFxOverrides(_prev: ActionResult | null, form: FormData
   refreshAll();
   const parts: string[] = [];
   if (pinned.length) parts.push(`Pinned ${pinned.join(', ')}.`);
-  if (released.length) parts.push(`Released ${released.join(', ')}.`);
+  if (released.length) parts.push(`Released ${released.join(', ')} back to the feed.`);
   return { ok: true, message: parts.join(' ') || 'No FX changes.' };
 }
