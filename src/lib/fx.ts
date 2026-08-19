@@ -1,4 +1,4 @@
-import { getDb, getFxRows, logAudit } from './db';
+import { getFxRows, logAudit, mutateState } from './store';
 import type { CurrencyCode } from './pricing/types';
 import { trmToUsdPerCop } from './pricing/units';
 
@@ -46,7 +46,7 @@ async function fetchEcb(
  */
 export async function refreshFxRates(actor: string): Promise<FxFetchResult> {
   const result: FxFetchResult = { updated: [], skipped: [], errors: [] };
-  const rows = getFxRows();
+  const rows = await getFxRows();
   const overridden = new Set(rows.filter((r) => r.isOverride).map((r) => r.currency));
   for (const currency of overridden) {
     result.skipped.push({ currency, reason: 'Manual override in place' });
@@ -54,10 +54,15 @@ export async function refreshFxRates(actor: string): Promise<FxFetchResult> {
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 10_000);
-  const write = getDb().prepare(
-    `UPDATE fx_rates SET usd_per_unit = ?, source = ?, fetched_at = datetime('now')
-     WHERE currency = ? AND is_override = 0`,
-  );
+
+  /** A pinned rate is never touched by a fetch. */
+  const write = async (currency: CurrencyCode, usdPerUnit: number, source: string) => {
+    await mutateState((state) => {
+      const row = state.fx.find((r) => r.currency === currency);
+      if (!row || row.isOverride) return;
+      Object.assign(row, { usdPerUnit, source, fetchedAt: new Date().toISOString() });
+    });
+  };
 
   try {
     const wanted = (['EUR', 'GBP', 'AUD', 'CAD'] as CurrencyCode[]).filter(
@@ -73,7 +78,7 @@ export async function refreshFxRates(actor: string): Promise<FxFetchResult> {
 
     if (trm.status === 'fulfilled') {
       const usdPerCop = trmToUsdPerCop(trm.value);
-      write.run(usdPerCop, `TRM ${trm.value.toFixed(2)} (Banco de la República)`, 'COP');
+      await write('COP', usdPerCop, `TRM ${trm.value.toFixed(2)} (Banco de la República)`);
       result.updated.push({
         currency: 'COP',
         usdPerUnit: usdPerCop,
@@ -85,7 +90,7 @@ export async function refreshFxRates(actor: string): Promise<FxFetchResult> {
 
     if (ecb.status === 'fulfilled') {
       for (const [code, usdPerUnit] of Object.entries(ecb.value)) {
-        write.run(usdPerUnit, 'ECB (Frankfurter)', code);
+        await write(code as CurrencyCode, usdPerUnit, 'ECB (Frankfurter)');
         result.updated.push({ currency: code as CurrencyCode, usdPerUnit, source: 'ECB' });
       }
     } else {
@@ -95,33 +100,31 @@ export async function refreshFxRates(actor: string): Promise<FxFetchResult> {
     clearTimeout(timer);
   }
 
-  logAudit(actor, 'fx_rates', null, 'refresh', result);
+  await logAudit(actor, 'fx_rates', null, 'refresh', result);
   return result;
 }
 
 /** Pin a rate by hand — a booked forward, or a hedged TRM. */
-export function overrideFxRate(
+export async function overrideFxRate(
   currency: CurrencyCode,
   usdPerUnit: number,
   actor: string,
   note = 'Manual override',
-): void {
-  getDb()
-    .prepare(
-      `INSERT INTO fx_rates (currency, usd_per_unit, source, is_override, fetched_at)
-       VALUES (?, ?, ?, 1, datetime('now'))
-       ON CONFLICT(currency) DO UPDATE SET
-         usd_per_unit = excluded.usd_per_unit,
-         source = excluded.source,
-         is_override = 1,
-         fetched_at = excluded.fetched_at`,
-    )
-    .run(currency, usdPerUnit, note);
-  logAudit(actor, 'fx_rates', currency, 'override', { usdPerUnit, note });
+): Promise<void> {
+  await mutateState((state) => {
+    const row = state.fx.find((r) => r.currency === currency);
+    const fetchedAt = new Date().toISOString();
+    if (row) Object.assign(row, { usdPerUnit, source: note, isOverride: true, fetchedAt });
+    else state.fx.push({ currency, usdPerUnit, source: note, isOverride: true, fetchedAt });
+  });
+  await logAudit(actor, 'fx_rates', currency, 'override', { usdPerUnit, note });
 }
 
 /** Release an override so the currency tracks its live source again. */
-export function clearFxOverride(currency: CurrencyCode, actor: string): void {
-  getDb().prepare('UPDATE fx_rates SET is_override = 0 WHERE currency = ?').run(currency);
-  logAudit(actor, 'fx_rates', currency, 'clear_override');
+export async function clearFxOverride(currency: CurrencyCode, actor: string): Promise<void> {
+  await mutateState((state) => {
+    const row = state.fx.find((r) => r.currency === currency);
+    if (row) row.isOverride = false;
+  });
+  await logAudit(actor, 'fx_rates', currency, 'clear_override');
 }

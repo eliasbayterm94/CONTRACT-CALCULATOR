@@ -1,5 +1,4 @@
 import { NextResponse } from 'next/server';
-import { ensureSeeded } from '@/lib/db/seed';
 import { fetchLatestKc, isFailure } from '@/lib/kcFeed';
 
 export const dynamic = 'force-dynamic';
@@ -12,7 +11,6 @@ export const dynamic = 'force-dynamic';
  * of being handed an empty field mid-quote.
  */
 export async function GET() {
-  ensureSeeded();
   const result = await fetchLatestKc();
   if (isFailure(result)) {
     return NextResponse.json(

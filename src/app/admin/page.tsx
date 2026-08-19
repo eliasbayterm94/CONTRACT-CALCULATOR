@@ -17,8 +17,7 @@ import {
   getPremiums,
   getProcesses,
   getReferenceData,
-} from '@/lib/db';
-import { ensureSeeded } from '@/lib/db/seed';
+} from '@/lib/store';
 import { compareMonthKeys, monthKeyLabel, parseMonthKey, upcomingContractMonths } from '@/lib/kc';
 import { DEFAULT_LBS_PER_CONTAINER } from '@/lib/pricing/units';
 import { monthOptions } from '@/lib/pricing/schedule';
@@ -38,22 +37,25 @@ const SECTIONS = [
 ] as const;
 
 export default async function AdminPage() {
-  ensureSeeded();
   const admin = await currentAdmin();
   const locked = !admin;
-  const codeSet = isAdminCodeSet();
+  const codeSet = await isAdminCodeSet();
   const codeManagedByEnv = Boolean(process.env.ADMIN_PASSWORD);
 
-  const reference = getReferenceData();
-  const allLines = getCostLines(true);
-  const allDestinations = getDestinations(true);
-  const allPackaging = getPackaging(true);
-  const allProcesses = getProcesses(true);
-  const fxRows = getFxRows();
-  const kcPrices = getKcPrices();
-  const premiums = getPremiums().filter((p) => p.qualityKey === 'standard');
-  const spot = getKcSpot();
-  const audit = getAuditLog(25);
+  const [reference, allLines, allDestinations, allPackaging, allProcesses, fxRows, kcPrices, allPremiums, spot, audit] =
+    await Promise.all([
+      getReferenceData(),
+      getCostLines(true),
+      getDestinations(true),
+      getPackaging(true),
+      getProcesses(true),
+      getFxRows(),
+      getKcPrices(),
+      getPremiums(),
+      getKcSpot(),
+      getAuditLog(25),
+    ]);
+  const premiums = allPremiums.filter((p) => p.qualityKey === 'standard');
 
   const monthKeys = new Set(kcPrices.map((k) => k.monthKey));
   for (const m of upcomingContractMonths(new Date(), 8)) monthKeys.add(m.key);

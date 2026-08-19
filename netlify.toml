@@ -1,0 +1,15 @@
+# Netlify build for the Forest Quote Desk.
+#
+# The Next.js plugin turns the server-rendered routes into functions. State
+# lives in Netlify Blobs rather than on disk, because a function's filesystem
+# does not survive the request — see src/lib/store/drivers.ts.
+
+[build]
+  command = "npm run build"
+  publish = ".next"
+
+[build.environment]
+  NODE_VERSION = "22"
+
+[[plugins]]
+  package = "@netlify/plugin-nextjs"

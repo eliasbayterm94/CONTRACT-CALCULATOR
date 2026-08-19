@@ -2,9 +2,8 @@ node_modules/
 .next/
 out/
 build/
-data/*.db
-data/*.db-shm
-data/*.db-wal
+.netlify/
+data/
 .env
 .env.local
 *.tsbuildinfo

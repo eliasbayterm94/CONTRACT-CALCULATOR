@@ -1,4 +1,4 @@
-import { getKcSpot, setKcSpot } from './db';
+import { getKcSpot, setKcSpot } from './store';
 
 /**
  * Latest KC ("Coffee C") price from a public market feed.
@@ -84,7 +84,7 @@ export async function fetchLatestKc(): Promise<KcQuote | KcFetchFailure> {
         if (cents < PLAUSIBLE_CENTS.min || cents > PLAUSIBLE_CENTS.max) {
           throw new Error(`${cents.toFixed(2)}c is outside the plausible range`);
         }
-        setKcSpot(cents, asOf, source);
+        await setKcSpot(cents, asOf, source);
         return { priceCents: cents, asOf, source, cached: false };
       } catch (error) {
         problems.push(`${source}: ${(error as Error).message}`);
@@ -94,7 +94,7 @@ export async function fetchLatestKc(): Promise<KcQuote | KcFetchFailure> {
     clearTimeout(timer);
   }
 
-  const stored = getKcSpot();
+  const stored = await getKcSpot();
   return {
     error: problems.join('; ') || 'no source responded',
     fallback: stored
