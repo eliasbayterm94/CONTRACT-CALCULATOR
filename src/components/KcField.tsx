@@ -64,6 +64,7 @@ export default function KcField({
     <>
       <div className="qc-kc-row">
         <input
+          id="kc-price"
           type="number"
           step="any"
           inputMode="decimal"

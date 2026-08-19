@@ -14,8 +14,10 @@ import type {
   QuoteWarning,
   Reconciliation,
   ReferenceData,
+  SensitivityRow,
   Shipment,
   ShipmentResult,
+  StaleFigure,
 } from './types';
 import {
   DEFAULT_LBS_PER_CONTAINER,
@@ -498,6 +500,83 @@ export function explainRung(
   );
 
   return steps;
+}
+
+/**
+ * The last day a quoted price stands.
+ *
+ * Priced off a KC that settles daily, so a quote that outlives the session it
+ * was given in is not a quote, it is a guess. Whole days from the quote date;
+ * one day means today.
+ */
+export function validUntil(quotedAt: Date, validDays: number): Date {
+  const until = new Date(quotedAt);
+  until.setDate(until.getDate() + Math.max(0, validDays - 1));
+  return until;
+}
+
+/** Default steps for the sensitivity table, in US cents per pound. */
+export const KC_MOVES = [-25, -10, -5, 5, 10, 25];
+
+/**
+ * What the quoted price does as the C moves.
+ *
+ * The price is affine in the KC leg — every other cost holds — so each row is
+ * one re-price at a shifted KC, rounded the same way the quote is. Finance is
+ * charged on cargo value, which includes the coffee, so the price does not
+ * move one-for-one with KC; the table is the honest answer to "and if it goes
+ * up ten cents".
+ */
+export function sensitivity(
+  input: QuoteInput,
+  ref: ReferenceData,
+  margin: number,
+  moves: number[] = KC_MOVES,
+): SensitivityRow[] {
+  const atQuoted = rungAt(margin, input, ref);
+  return moves.map((moveCents) => {
+    const kcUsdPerLb = Math.max(0, input.kcUsdPerLb + moveCents / 100);
+    const shifted = rungAt(margin, { ...input, kcUsdPerLb }, ref);
+    return {
+      moveCents,
+      kcCents: kcUsdPerLb * 100,
+      displayPrice: shifted.displayPrice,
+      deltaDisplay: shifted.displayPrice - atQuoted.displayPrice,
+      totalValueUsd: shifted.totalValueUsd,
+    };
+  });
+}
+
+/**
+ * How old the figures behind a quote are.
+ *
+ * A rate nobody has touched in three weeks prices a contract just as
+ * confidently as one fetched this morning, and nothing on screen tells them
+ * apart. Anything past the desk's tolerance is flagged with where to go fix
+ * it.
+ */
+export function staleFigures(
+  figures: Array<{ label: string; where: string; updatedAt: string | null }>,
+  staleAfterDays: number,
+  now = new Date(),
+): StaleFigure[] {
+  return figures.map((figure) => {
+    const ageDays = figure.updatedAt ? daysBetween(figure.updatedAt, now) : Number.POSITIVE_INFINITY;
+    return {
+      label: figure.label,
+      where: figure.where,
+      ageDays,
+      stale: ageDays >= staleAfterDays,
+      updatedAt: figure.updatedAt,
+    };
+  });
+}
+
+function daysBetween(iso: string, now: Date): number {
+  const then = new Date(iso.includes('T') ? iso : `${iso.replace(' ', 'T')}Z`);
+  const ms = then.getTime();
+  if (Number.isNaN(ms)) return Number.POSITIVE_INFINITY;
+  return Math.max(0, Math.floor((now.getTime() - ms) / 86_400_000));
 }
 
 /** Price a quote at an arbitrary margin, outside the published ladder. */

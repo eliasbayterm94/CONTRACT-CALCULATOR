@@ -5,6 +5,8 @@ import PriceText from './PriceText';
 import QuoteSheetDialog from './QuoteSheetDialog';
 import KcField from './KcField';
 import NumberInput from './NumberInput';
+import ShortcutSheet from './ShortcutSheet';
+import { advanceOnEnter, useShortcuts, type Shortcut } from './useShortcuts';
 import {
   calculateQuote,
   cappedHold,
@@ -12,7 +14,10 @@ import {
   kcForTarget,
   reconcile,
   rungAt,
+  sensitivity,
   solveForPrice,
+  staleFigures,
+  validUntil,
 } from '@/lib/pricing/engine';
 import {
   INCOTERMS,
@@ -26,12 +31,14 @@ import {
 } from '@/lib/pricing/types';
 import { PRICE_DP, UNIT_LABEL, fromQuoteUnit, toQuoteUnit, totalInQuoteCurrency } from '@/lib/pricing/units';
 import { deliveryPlan, monthLabel, monthSpan, type CalendarMonth } from '@/lib/pricing/schedule';
-import { cents, money, percent, plain } from '@/lib/format';
+import { cents, longDate, money, percent, plain } from '@/lib/format';
 import type { QuoteSheetData } from '@/lib/quoteSheet';
 import { draftReference } from '@/lib/quoteSheet';
 
 interface Props {
   reference: ReferenceData;
+  /** Stored figures with the date they were last set, for the staleness check. */
+  freshness: Array<{ label: string; where: string; updatedAt: string | null }>;
   months: CalendarMonth[];
   isAdmin: boolean;
   defaultKcCents: number;
@@ -43,6 +50,7 @@ const marginLabel = (m: number) => `${(m * 100).toFixed((m * 100) % 1 === 0 ? 0 
 
 export default function QuoteBuilder({
   reference,
+  freshness,
   months,
   isAdmin,
   defaultKcCents,
@@ -72,6 +80,7 @@ export default function QuoteBuilder({
   const [targetMargin, setTargetMargin] = useState('20');
 
   const [sheet, setSheet] = useState<QuoteSheetData | null>(null);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
 
   // The audit view. Off by default — the breakdown answers "what does it cost",
   // this answers "and where did that number come from", which is a different
@@ -152,6 +161,15 @@ export default function QuoteBuilder({
     return needed === null ? null : { needed, margin, move: needed - input.kcUsdPerLb };
   }, [result, destination, targetPrice, targetMargin, reference, input]);
 
+  // Rendered on the client, so the clock is the trader's own — the date on the
+  // sheet matches the day they are actually sitting at.
+  const [today] = useState(() => new Date());
+
+  const holdsUntil = useMemo(
+    () => validUntil(today, settings.validDays),
+    [today, settings.validDays],
+  );
+
   const buildSheet = useCallback((): QuoteSheetData | null => {
     if (!result || !destination || !activeRung || !plan) return null;
     const unit = UNIT_LABEL[destination.quoteUnit];
@@ -174,6 +192,9 @@ export default function QuoteBuilder({
       valueLabel: 'Contract value',
       value: money(plan.totalValue, destination.quoteCurrency, 0),
       basis: `Priced against a KC of ${cents(input.kcUsdPerLb)} per lb.`,
+      validity:
+        `Holds until ${longDate(holdsUntil)}. The price is tied to that KC and moves with the C market — ` +
+        'past that date, or on a material move, it has to be requoted. Subject to final contract.',
       rows: {
         title: `Shipment plan · ${plan.even ? plain(plan.perMonthBags, 0) : `~${plain(plan.perMonthBags, 1)}`} bags a month`,
         head: ['Month', 'Bags', 'Pounds', `Billing ${destination.quoteCurrency}`],
@@ -184,7 +205,7 @@ export default function QuoteBuilder({
       },
     };
   }, [result, destination, activeRung, plan, clientName, incoterm, reference, input,
-      fromMonth, safeTo, effectiveHold]);
+      fromMonth, safeTo, effectiveHold, holdsUntil]);
 
   /** Adopt a rung: the headline, the schedule and the quote sheet all follow. */
   const useRung = useCallback((margin: number) => {
@@ -192,6 +213,50 @@ export default function QuoteBuilder({
   }, []);
 
   const warnings = (result?.warnings ?? []).filter((w) => isAdmin || !w.adminOnly);
+
+  const stale = useMemo(
+    () => staleFigures(freshness, settings.staleAfterDays, today).filter((f) => f.stale),
+    [freshness, settings.staleAfterDays, today],
+  );
+
+  // What the C market does to this quote. Traders need it as much as admin.
+  const kcMoves = useMemo(
+    () => (result && activeRung ? sensitivity(input, reference, activeRung.margin) : []),
+    [result, activeRung, input, reference],
+  );
+
+  const focusField = useCallback((id: string) => {
+    const el = document.getElementById(id);
+    if (!(el instanceof HTMLInputElement)) return;
+    el.focus();
+    el.select();
+    el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  }, []);
+
+  const shortcuts = useMemo<Shortcut[]>(
+    () => [
+      { key: 'k', label: 'Jump to the KC price', run: () => focusField('kc-price') },
+      { key: 'b', label: 'Jump to bags', run: () => focusField('bags') },
+      { key: 'c', label: 'Jump to the client name', run: () => focusField('client') },
+      { key: 'd', label: 'Download the quote', run: () => setSheet(buildSheet()) },
+      ...(isAdmin
+        ? [{ key: 'a', label: 'Show or hide the arithmetic', run: () => setShowWorking((on) => !on) }]
+        : []),
+      { key: '?', label: 'This list', run: () => setShortcutsOpen(true) },
+    ],
+    [focusField, buildSheet, isAdmin],
+  );
+
+  // Off while the shortcut sheet is up, so its own Esc and ? are not fought over.
+  useShortcuts(shortcuts, !shortcutsOpen);
+
+  // Under the floor is not a footnote. It is the one thing on this screen that
+  // has to stop someone, so it is derived once and shouted about everywhere.
+  const belowFloor = Boolean(activeRung && activeRung.margin < settings.minMargin - 1e-9);
+  const shortfallUsdPerLb =
+    belowFloor && result && activeRung
+      ? result.floor.priceUsdPerLb - activeRung.priceUsdPerLb
+      : 0;
 
   // Both are cheap, but they only mean anything to an admin looking at the
   // breakdown, so they are not computed for a trader's render.
@@ -209,7 +274,7 @@ export default function QuoteBuilder({
   return (
     <>
       {/* ── market bar ─────────────────────────────────────────────── */}
-      <div className="qc-market">
+      <div className="qc-market" data-field-scope onKeyDown={advanceOnEnter}>
         <div className="qc-market-grid">
           <div>
             <span className="qc-market-label">KC price ¢/lb</span>
@@ -286,7 +351,7 @@ export default function QuoteBuilder({
         <div className="qc-rail">
           <section className="qc-panel">
             <div className="qc-panel-head"><h2 className="qc-panel-title">Contract</h2></div>
-            <div className="qc-panel-body">
+            <div className="qc-panel-body" data-field-scope onKeyDown={advanceOnEnter}>
               <div className="qc-fields">
                 <div className="qc-field wide">
                   <label className="qc-label" htmlFor="client">Client</label>
@@ -401,9 +466,64 @@ export default function QuoteBuilder({
             </div>
           )}
 
+          {stale.length > 0 && (
+            <div className="qc-stale" role="status">
+              <span className="qc-stale-mark" aria-hidden="true">!</span>
+              <div>
+                <strong>
+                  {stale.length === 1 ? 'One figure behind this quote is out of date' : `${stale.length} figures behind this quote are out of date`}
+                </strong>
+                <ul className="qc-stale-list">
+                  {/* A fresh install has every rate on its seed; naming all of
+                      them turns the warning into a wall nobody reads. */}
+                  {stale.slice(0, 4).map((f) => (
+                    <li key={f.label}>
+                      {f.label} —{' '}
+                      {Number.isFinite(f.ageDays) ? `last set ${f.ageDays} days ago` : 'never set, still on the seeded figure'}
+                      {isAdmin && <span className="qc-stale-where"> · {f.where}</span>}
+                    </li>
+                  ))}
+                  {stale.length > 4 && <li>and {stale.length - 4} more</li>}
+                </ul>
+              </div>
+            </div>
+          )}
+
           {result && destination && activeRung && (
             <>
-              <div className="qc-headline">
+              {belowFloor && (
+                <div className="qc-floor-alarm" role="alert">
+                  <span className="qc-floor-alarm-mark" aria-hidden="true">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2">
+                      <path d="M12 9v5M12 17.5v.5" />
+                      <path d="M10.3 3.9 1.8 18.4A2 2 0 0 0 3.5 21.4h17A2 2 0 0 0 22.2 18.4L13.7 3.9a2 2 0 0 0-3.4 0Z" />
+                    </svg>
+                  </span>
+                  <div className="qc-floor-alarm-body">
+                    <span className="qc-floor-alarm-title">
+                      Under the {marginLabel(settings.minMargin)} floor
+                    </span>
+                    <span className="qc-floor-alarm-detail">
+                      This quote is {percent(settings.minMargin - activeRung.margin, 2)} short. That is{' '}
+                      {cents(shortfallUsdPerLb)}/lb, or{' '}
+                      {money(
+                        totalInQuoteCurrency(shortfallUsdPerLb * result.totalLbs, destination.quoteCurrency, reference.fx),
+                        destination.quoteCurrency,
+                        0,
+                      )}{' '}
+                      off the contract. The floor is{' '}
+                      <strong>
+                        {money(result.floor.displayPrice, destination.quoteCurrency, PRICE_DP)}/{UNIT_LABEL[destination.quoteUnit]}
+                      </strong>.
+                    </span>
+                  </div>
+                  <button type="button" className="fc-btn fc-btn-navy" onClick={() => useRung(settings.minMargin)}>
+                    Take it to the floor
+                  </button>
+                </div>
+              )}
+
+              <div className={`qc-headline${belowFloor ? ' is-below-floor' : ''}`}>
                 <div className="qc-hero">
                   <div className="qc-hero-label">
                     Quote at {marginInput.trim() === '' ? `floor margin ${marginLabel(settings.minMargin)}` : marginLabel(activeRung.margin)}
@@ -423,6 +543,10 @@ export default function QuoteBuilder({
                       {money(totalInQuoteCurrency(activeRung.totalValueUsd, destination.quoteCurrency, reference.fx), destination.quoteCurrency, 0)} contract
                     </span>
                     {result.waivedFixedCost && <span className="qc-waived-flag">Fixed cost waived</span>}
+                  </div>
+                  <div className="qc-validity">
+                    Holds until <strong>{longDate(holdsUntil)}</strong> · priced at KC{' '}
+                    <strong>{plain(input.kcUsdPerLb * 100, 2)}&cent;</strong> — subject to change with the C market.
                   </div>
                 </div>
                 <div className="qc-sidestats">
@@ -711,6 +835,59 @@ export default function QuoteBuilder({
                 </div>
               </section>
 
+              {/* what the C market does to this price */}
+              <section className="qc-panel">
+                <div className="qc-panel-head">
+                  <h2 className="qc-panel-title">If the C moves</h2>
+                  <span className="qc-panel-note">
+                    At {marginLabel(activeRung.margin)}, from KC {plain(input.kcUsdPerLb * 100, 2)}&cent;
+                  </span>
+                </div>
+                <div className="qc-table-wrap">
+                  <table className="qc-table qc-sens">
+                    <thead>
+                      <tr>
+                        <th>KC move</th>
+                        <th className="qc-num">KC</th>
+                        <th className="qc-num">Your price</th>
+                        <th className="qc-num">Change</th>
+                        <th className="qc-num">Contract</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {kcMoves.map((row) => (
+                        <tr key={row.moveCents} className={row.moveCents < 0 ? 'qc-sens-down' : 'qc-sens-up'}>
+                          <td>
+                            <span className={`qc-sens-move${row.moveCents < 0 ? ' is-down' : ' is-up'}`}>
+                              {row.moveCents > 0 ? '+' : '\u2212'}{Math.abs(row.moveCents)}&cent;
+                            </span>
+                          </td>
+                          <td className="qc-num">{plain(row.kcCents, 2)}&cent;</td>
+                          <td className="qc-num">
+                            <strong>{money(row.displayPrice, destination.quoteCurrency, PRICE_DP)}</strong>
+                          </td>
+                          <td className={`qc-num qc-sens-delta${row.deltaDisplay < 0 ? ' is-down' : ' is-up'}`}>
+                            {row.deltaDisplay > 0 ? '+' : '\u2212'}
+                            {money(Math.abs(row.deltaDisplay), destination.quoteCurrency, PRICE_DP)}
+                          </td>
+                          <td className="qc-num">
+                            {money(
+                              totalInQuoteCurrency(row.totalValueUsd, destination.quoteCurrency, reference.fx),
+                              destination.quoteCurrency,
+                              0,
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <p className="qc-footnote">
+                  The price moves more than the C does: margin and, on DDP, finance are both charged on a
+                  cargo value that includes the coffee. Everything else in the quote is held still.
+                </p>
+              </section>
+
               {/* delivery schedule */}
               {plan && (
                 <section className="qc-panel">
@@ -944,7 +1121,10 @@ export default function QuoteBuilder({
                 <div className="qc-export-copy">
                   <span className="qc-export-title">Send this quote</span>
                   <span className="qc-export-sub">
-                    A one-page sheet with the terms and the price. No costs, no margin.
+                    A one-page sheet with the terms and the price. No costs, no margin.{' '}
+                    <button type="button" className="qc-keyhint" onClick={() => setShortcutsOpen(true)}>
+                      Press <kbd>?</kbd> for shortcuts
+                    </button>
                   </span>
                 </div>
                 <button type="button" className="fc-btn fc-btn-navy" onClick={() => setSheet(buildSheet())}>
@@ -960,6 +1140,7 @@ export default function QuoteBuilder({
       </div>
 
       <QuoteSheetDialog data={sheet} onClose={() => setSheet(null)} />
+      <ShortcutSheet open={shortcutsOpen} shortcuts={shortcuts} onClose={() => setShortcutsOpen(false)} />
     </>
   );
 }

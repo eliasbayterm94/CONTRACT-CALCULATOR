@@ -43,7 +43,7 @@ export function MonthTableEditor({
         <span className="qc-panel-note">{note}</span>
       </div>
       <div className="qc-table-wrap">
-        <table className="qc-table">
+        <table className="qc-table qc-cards">
           <thead>
             <tr><th>Month</th><th className="qc-num">¢/lb</th><th>Last set</th></tr>
           </thead>
@@ -144,7 +144,7 @@ export function FxEditor({ rows, locked }: { rows: FxRow[]; locked: boolean }) {
         </span>
       </div>
       <div className="qc-table-wrap">
-        <table className="qc-table">
+        <table className="qc-table qc-cards">
           <thead>
             <tr>
               <th>Currency</th><th className="qc-num">Rate</th><th className="qc-num">USD per unit</th>

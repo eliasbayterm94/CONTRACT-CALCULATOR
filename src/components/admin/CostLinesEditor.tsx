@@ -76,7 +76,7 @@ export default function CostLinesEditor({
       )}
 
       <div className="qc-table-wrap">
-        <table className="qc-table">
+        <table className="qc-table qc-cards">
           <thead>
             <tr>
               <th>Line</th>

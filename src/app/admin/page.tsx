@@ -3,6 +3,7 @@ import DestinationsEditor from '@/components/admin/DestinationsEditor';
 import PackagingProcessEditor from '@/components/admin/PackagingProcessEditor';
 import PolicyEditor from '@/components/admin/PolicyEditor';
 import { FxEditor, MonthTableEditor } from '@/components/admin/MarketEditor';
+import CardLabels from '@/components/admin/CardLabels';
 import { ChangeCodeForm, CreateCodeForm, SignInForm, SignOutButton } from '@/components/admin/SignInForm';
 import { saveKcPrices, savePremiums } from '@/app/actions';
 import { currentAdmin, isAdminCodeSet } from '@/lib/auth';
@@ -110,6 +111,8 @@ export default async function AdminPage() {
           <CreateCodeForm />
         )}
       </section>
+
+      <CardLabels />
 
       <nav className="qc-admin-nav">
         {SECTIONS.map(([id, label]) => (

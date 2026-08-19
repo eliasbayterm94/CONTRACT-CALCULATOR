@@ -21,6 +21,8 @@ export default function PolicyEditor({
     ladder: settings.ladder.map((m) => Number((m * 100).toFixed(2))).join(', '),
     financeMonthlyRate: (settings.financeMonthlyRate * 100).toFixed(3),
     freeHoldMonths: String(settings.freeHoldMonths),
+    validDays: String(settings.validDays),
+    staleAfterDays: String(settings.staleAfterDays),
   };
   const [form, setForm] = useState(initial);
 
@@ -104,6 +106,26 @@ export default function PolicyEditor({
               onChange={(e) => set('financeMonthlyRate', e.target.value)}
             />
             <p className="qc-hint">Charged on the full cargo value, DDP only.</p>
+          </div>
+          <div className="qc-field">
+            <label className="qc-label" htmlFor="validDays">Quote holds for, days</label>
+            <input
+              id="validDays" name="validDays"
+              className={`qc-input num${changed('validDays') ? ' is-dirty' : ''}`}
+              type="number" step={1} min={1} value={form.validDays} disabled={locked}
+              onChange={(e) => set('validDays', e.target.value)}
+            />
+            <p className="qc-hint">One means the day it was quoted. Printed on the sheet the client gets.</p>
+          </div>
+          <div className="qc-field">
+            <label className="qc-label" htmlFor="staleAfterDays">Warn on figures older than, days</label>
+            <input
+              id="staleAfterDays" name="staleAfterDays"
+              className={`qc-input num${changed('staleAfterDays') ? ' is-dirty' : ''}`}
+              type="number" step={1} min={1} value={form.staleAfterDays} disabled={locked}
+              onChange={(e) => set('staleAfterDays', e.target.value)}
+            />
+            <p className="qc-hint">Applies to KC, quality premiums and exchange rates.</p>
           </div>
         </div>
       </div>

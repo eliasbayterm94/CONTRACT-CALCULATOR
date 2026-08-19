@@ -23,6 +23,8 @@ export interface QuoteSheetData {
   valueLabel: string;
   value: string;
   basis: string;
+  /** How long the price stands, and on what. Driven by the desk's own setting. */
+  validity: string;
   rows: QuoteSheetRows | null;
 }
 
@@ -217,9 +219,7 @@ export function drawQuoteSheet(canvas: HTMLCanvasElement, data: QuoteSheetData):
   y += PRICE_BLOCK + 34;
 
   text(data.basis, M, y, { size: 12, color: FC.ink500 });
-  text('Subject to final contract. Prices valid for 3 business days from the date above.', M, y + 20, {
-    size: 11, color: FC.ink300,
-  });
+  text(data.validity, M, y + 20, { size: 11, color: FC.ink300 });
 
   g.strokeStyle = FC.ink100;
   g.beginPath();

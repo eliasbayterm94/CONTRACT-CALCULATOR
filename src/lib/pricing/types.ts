@@ -134,6 +134,33 @@ export interface EngineSettings {
   financeMonthlyRate: number;
   /** Months of carry the fixed cost already covers before storage and finance bill. */
   freeHoldMonths: number;
+  /** Days a quoted price is held, before the C market moves it. */
+  validDays: number;
+  /** How old a rate or premium may get before the desk is warned, in days. */
+  staleAfterDays: number;
+}
+
+/** One rung of the "what if the C moves" table. */
+export interface SensitivityRow {
+  /** KC move from the quoted level, in US cents per pound. */
+  moveCents: number;
+  kcCents: number;
+  /** The quoted price at that KC, in the client's currency and unit. */
+  displayPrice: number;
+  /** Change from the quoted price, same currency and unit. */
+  deltaDisplay: number;
+  totalValueUsd: number;
+}
+
+/** A stored figure that may have gone out of date. */
+export interface StaleFigure {
+  label: string;
+  /** Where it is edited, so the warning says what to do about it. */
+  where: string;
+  ageDays: number;
+  /** True once the age is past the desk's tolerance. */
+  stale: boolean;
+  updatedAt: string | null;
 }
 
 export interface ReferenceData {

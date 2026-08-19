@@ -4,11 +4,11 @@ import { useCallback, useMemo, useState } from 'react';
 import NumberInput from './NumberInput';
 import PriceText from './PriceText';
 import QuoteSheetDialog from './QuoteSheetDialog';
-import { calculateContract, marginAtPrice, priceAtMargin } from '@/lib/pricing/engine';
+import { calculateContract, marginAtPrice, priceAtMargin, validUntil } from '@/lib/pricing/engine';
 import { INCOTERMS, type Incoterm, type QuoteInput, type ReferenceData, type Shipment } from '@/lib/pricing/types';
 import { PRICE_DP, UNIT_LABEL, ceilPrice, fromQuoteUnit, toQuoteUnit, totalInQuoteCurrency } from '@/lib/pricing/units';
 import { monthLabel, monthSpan, type CalendarMonth } from '@/lib/pricing/schedule';
-import { cents, money, percent, plain } from '@/lib/format';
+import { cents, longDate, money, percent, plain } from '@/lib/format';
 import { draftReference, type QuoteSheetData } from '@/lib/quoteSheet';
 
 const marginLabel = (m: number) => `${(m * 100).toFixed((m * 100) % 1 === 0 ? 0 : 1)}%`;
@@ -110,6 +110,10 @@ export default function MultiShipmentBuilder({
     };
   }, [contract, destination, target, reference.fx, settings]);
 
+  // The trader's own clock, so the date on the sheet is the day they are on.
+  const [today] = useState(() => new Date());
+  const holdsUntil = useMemo(() => validUntil(today, settings.validDays), [today, settings.validDays]);
+
   const buildSheet = useCallback((): QuoteSheetData | null => {
     if (!contract || !destination) return null;
     const unit = UNIT_LABEL[destination.quoteUnit];
@@ -135,6 +139,9 @@ export default function MultiShipmentBuilder({
         destination.quoteCurrency, 0,
       ),
       basis: `Priced against a weighted KC of ${cents(contract.weightedKcUsdPerLb)} per lb.`,
+      validity:
+        `Holds until ${longDate(holdsUntil)}. Each shipment is priced off its own KC month and moves with ` +
+        'the C market — past that date, or on a material move, it has to be requoted. Subject to final contract.',
       rows: {
         title: 'Shipment plan',
         head: ['Shipment', 'Bags', `Price ${destination.quoteCurrency}/${unit}`, `Value ${destination.quoteCurrency}`],

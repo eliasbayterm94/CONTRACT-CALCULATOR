@@ -53,6 +53,11 @@ export function plain(value: number, digits = 2): string {
   });
 }
 
+/** A date a client will read on a quote sheet, not a log line. */
+export function longDate(date: Date): string {
+  return date.toLocaleDateString('en-GB', { day: '2-digit', month: 'long', year: 'numeric' });
+}
+
 export function shortDate(iso: string): string {
   const d = new Date(iso.includes('T') ? iso : `${iso.replace(' ', 'T')}Z`);
   if (Number.isNaN(d.getTime())) return iso;

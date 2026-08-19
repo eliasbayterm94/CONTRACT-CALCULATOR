@@ -376,6 +376,10 @@ export const SEED_SETTINGS: EngineSettings = {
   ladder: [0.16, 0.2, 0.225, 0.25, 0.3],
   financeMonthlyRate: 0.0072,
   freeHoldMonths: 2,
+  /* A price is good for the trading day it was given on, and no longer: the
+     C settles daily and the whole quote hangs off it. */
+  validDays: 1,
+  staleAfterDays: 7,
 };
 
 /** Fallback FX, used only until the live rates land. USD per one unit. */

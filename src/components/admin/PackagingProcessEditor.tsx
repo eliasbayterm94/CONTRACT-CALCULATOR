@@ -41,7 +41,7 @@ export default function PackagingProcessEditor({
         <span>Traders may only quote the packaging marked below. Admin can use any active type.</span>
       </div>
       <div className="qc-table-wrap">
-        <table className="qc-table">
+        <table className="qc-table qc-cards">
           <thead>
             <tr>
               <th>Packaging</th>
@@ -113,7 +113,7 @@ export default function PackagingProcessEditor({
       </div>
 
       <div className="qc-table-wrap" style={{ borderTop: '1px solid var(--fc-ink-100)' }}>
-        <table className="qc-table">
+        <table className="qc-table qc-cards">
           <thead>
             <tr>
               <th>Milling / process</th>

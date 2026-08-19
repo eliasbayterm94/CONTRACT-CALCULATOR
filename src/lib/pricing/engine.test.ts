@@ -9,7 +9,10 @@ import {
   marginAtPrice,
   priceAtMargin,
   reconcile,
+  sensitivity,
   solveForPrice,
+  staleFigures,
+  validUntil,
 } from './engine';
 import {
   SEED_COST_LINES,
@@ -497,5 +500,106 @@ describe('the audit view', () => {
       explainRung(r.floor, r, ref.settings, ref.fx).map((s) => s.label);
     expect(labels(ny).some((l) => l.startsWith('In '))).toBe(false);
     expect(labels(rotterdam)).toContain('In EUR per kg');
+  });
+});
+
+describe('how long a price stands', () => {
+  it('holds for the trading day it was given on', () => {
+    const until = validUntil(new Date('2026-03-10T14:00:00Z'), 1);
+    expect(until.toISOString().slice(0, 10)).toBe('2026-03-10');
+  });
+
+  it('counts whole days, so three days means today and the two after', () => {
+    const until = validUntil(new Date('2026-03-10T14:00:00Z'), 3);
+    expect(until.toISOString().slice(0, 10)).toBe('2026-03-12');
+  });
+
+  it('never lands before the day it was quoted', () => {
+    const until = validUntil(new Date('2026-03-10T14:00:00Z'), 0);
+    expect(until.toISOString().slice(0, 10)).toBe('2026-03-10');
+  });
+});
+
+describe('what the C market does to the price', () => {
+  // A real KC, so a downward move has somewhere to go.
+  const args = input({
+    destinationKey: 'ny', incoterm: 'DDP', holdMonths: 4,
+    kcUsdPerLb: 3.2, premiumUsdPerLb: 0.45,
+  });
+
+  it('moves the price up with KC and down with it', () => {
+    const rows = sensitivity(args, ref, 0.16);
+    const up = rows.filter((r) => r.moveCents > 0);
+    const down = rows.filter((r) => r.moveCents < 0);
+    expect(up.every((r) => r.deltaDisplay > 0)).toBe(true);
+    expect(down.every((r) => r.deltaDisplay < 0)).toBe(true);
+  });
+
+  it('quotes each row at the KC it names', () => {
+    for (const row of sensitivity(args, ref, 0.16)) {
+      expect(row.kcCents).toBeCloseTo(args.kcUsdPerLb * 100 + row.moveCents, 8);
+    }
+  });
+
+  it('passes on more than the KC move, because margin and finance ride on it', () => {
+    const [row] = sensitivity(args, ref, 0.16, [10]);
+    // A ten cent move on the C is more than ten cents on the invoice.
+    expect(row.deltaDisplay).toBeGreaterThan(0.1);
+  });
+
+  it('cannot be talked into a negative KC', () => {
+    const cheap = input({ kcUsdPerLb: 0.05 });
+    const [row] = sensitivity(cheap, ref, 0.16, [-25]);
+    expect(row.kcCents).toBe(0);
+  });
+
+  it('leaves the quoted price alone at no move', () => {
+    const [row] = sensitivity(args, ref, 0.16, [0]);
+    expect(row.deltaDisplay).toBe(0);
+  });
+});
+
+describe('figures that have gone out of date', () => {
+  const now = new Date('2026-03-20T12:00:00Z');
+
+  it('flags anything past the desk tolerance', () => {
+    const [fresh, old] = staleFigures(
+      [
+        { label: 'TRM', where: 'Exchange rates', updatedAt: '2026-03-19T12:00:00Z' },
+        { label: 'EUR', where: 'Exchange rates', updatedAt: '2026-03-01T12:00:00Z' },
+      ],
+      7,
+      now,
+    );
+    expect(fresh.stale).toBe(false);
+    expect(fresh.ageDays).toBe(1);
+    expect(old.stale).toBe(true);
+    expect(old.ageDays).toBe(19);
+  });
+
+  it('treats never-set as the worst case, not the best', () => {
+    const [never] = staleFigures([{ label: 'KC', where: 'KC & premiums', updatedAt: null }], 7, now);
+    expect(never.stale).toBe(true);
+    expect(never.ageDays).toBe(Number.POSITIVE_INFINITY);
+  });
+
+  it('flags on the tolerance day itself', () => {
+    const [onTheDay] = staleFigures(
+      [{ label: 'KC', where: 'KC & premiums', updatedAt: '2026-03-13T12:00:00Z' }],
+      7,
+      now,
+    );
+    expect(onTheDay.ageDays).toBe(7);
+    expect(onTheDay.stale).toBe(true);
+  });
+
+  it('does not report a future timestamp as aged', () => {
+    const [ahead] = staleFigures(
+      [{ label: 'KC', where: 'KC & premiums', updatedAt: '2026-03-25T12:00:00Z' }],
+      7,
+      now,
+    );
+    expect(ahead.ageDays).toBe(0);
+    expect(ahead.stale).toBe(false);
   });
 });

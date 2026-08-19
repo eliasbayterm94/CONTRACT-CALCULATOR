@@ -42,7 +42,7 @@ export default function DestinationsEditor({
         <span>Storage is per packaging unit per month.</span>
       </div>
       <div className="qc-table-wrap">
-        <table className="qc-table">
+        <table className="qc-table qc-cards">
           <thead>
             <tr>
               <th>Destination</th>

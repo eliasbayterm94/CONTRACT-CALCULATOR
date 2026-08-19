@@ -287,6 +287,8 @@ export async function saveEngineSettings(
     return { ok: false, message: 'Give at least one ladder rung, as percentages.' };
   }
   const freeHoldMonths = Math.max(0, Math.round(num(form, 'freeHoldMonths')));
+  const validDays = Math.max(1, Math.round(num(form, 'validDays', 1)));
+  const staleAfterDays = Math.max(1, Math.round(num(form, 'staleAfterDays', 7)));
 
   await mutateState((state) => {
     Object.assign(state.settings, {
@@ -296,6 +298,8 @@ export async function saveEngineSettings(
       ladder,
       financeMonthlyRate: num(form, 'financeMonthlyRate') / 100,
       freeHoldMonths,
+      validDays,
+      staleAfterDays,
     });
   });
   await logAudit(g.actor, 'settings', null, 'update', { minMargin, ladder, freeHoldMonths });
