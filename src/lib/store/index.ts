@@ -23,12 +23,12 @@ import type { CurrencyCode, EngineSettings, ReferenceData } from '../pricing/typ
 
 export type { FxRow, KcPrice, KcSpot, Premium, AuditEntry } from './types';
 
-let driver: StoreDriver | null = null;
+let driver: Promise<StoreDriver> | null = null;
 let cached: AppState | null = null;
 let inFlight: Promise<AppState> | null = null;
 let queue: Promise<unknown> = Promise.resolve();
 
-function getDriver(): StoreDriver {
+function getDriver(): Promise<StoreDriver> {
   driver ??= createDriver();
   return driver;
 }
@@ -81,13 +81,13 @@ export async function loadState(): Promise<AppState> {
 }
 
 async function readState(): Promise<AppState> {
-  const stored = await getDriver().load();
+  const stored = await (await getDriver()).load();
   if (stored && stored.version === STATE_VERSION) {
     cached = stored;
     return cached;
   }
   const fresh = seedState();
-  await getDriver().save(fresh);
+  await (await getDriver()).save(fresh);
   cached = fresh;
   return fresh;
 }
@@ -102,7 +102,7 @@ export async function mutateState<T>(change: (state: AppState) => T): Promise<T>
     cached = null;
     const state = await loadState();
     const result = change(state);
-    await getDriver().save(state);
+    await (await getDriver()).save(state);
     cached = state;
     return result;
   });
@@ -115,8 +115,8 @@ export function forgetState(): void {
   cached = null;
 }
 
-export function storeName(): string {
-  return getDriver().name;
+export async function storeName(): Promise<string> {
+  return (await getDriver()).name;
 }
 
 /* ------------------------------------------------------------- settings -- */
