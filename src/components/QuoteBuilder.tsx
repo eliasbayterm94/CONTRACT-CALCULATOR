@@ -31,6 +31,8 @@ import {
 } from '@/lib/pricing/types';
 import { PRICE_DP, UNIT_LABEL, fromQuoteUnit, toQuoteUnit, totalInQuoteCurrency } from '@/lib/pricing/units';
 import { deliveryPlan, monthLabel, monthSpan, type CalendarMonth } from '@/lib/pricing/schedule';
+import { MONTH_OF_YEAR_NAMES, monthOfYear, premiumForMonth } from '@/lib/pricing/premium';
+import type { PremiumOverride, SeasonalPremium } from '@/lib/store/types';
 import { cents, longDate, money, percent, plain } from '@/lib/format';
 import type { QuoteSheetData } from '@/lib/quoteSheet';
 import { draftReference } from '@/lib/quoteSheet';
@@ -42,7 +44,9 @@ interface Props {
   months: CalendarMonth[];
   isAdmin: boolean;
   defaultKcCents: number;
-  defaultPremiumCents: number;
+  /** The seasonal differential table and its dated exceptions. */
+  season: SeasonalPremium[];
+  overrides: PremiumOverride[];
   kcSpot: { priceCents: number; asOf: string; source: string } | null;
 }
 
@@ -54,7 +58,8 @@ export default function QuoteBuilder({
   months,
   isAdmin,
   defaultKcCents,
-  defaultPremiumCents,
+  season,
+  overrides,
   kcSpot,
 }: Props) {
   const settings = reference.settings;
@@ -68,11 +73,29 @@ export default function QuoteBuilder({
   const [packagingKey, setPackagingKey] = useState(traderPackaging);
   const [bags, setBags] = useState(250);
   const [kcCents, setKcCents] = useState(String(defaultKcCents || ''));
-  const [premiumCents, setPremiumCents] = useState(String(defaultPremiumCents || ''));
+  // Null means "whatever the shipment month says". A typed figure overrides it
+  // for this quote only, and the month can be handed back at any point.
+  const [premiumEdit, setPremiumEdit] = useState<string | null>(null);
   const [fromMonth, setFromMonth] = useState(months[0]?.key ?? '');
   const [toMonth, setToMonth] = useState(months[4]?.key ?? months[months.length - 1]?.key ?? '');
   const [holdMonths, setHoldMonths] = useState(2);
   const [waiveFixedCost, setWaiveFixedCost] = useState(false);
+
+  /**
+   * The differential the first shipment month resolves to.
+   *
+   * The premium follows the harvest, so a contract shipping from August is
+   * priced on August's figure whatever KC month it hedges against. Where the
+   * two used to be tangled, a shipment month with no KC contract of its own
+   * simply had no premium at all.
+   */
+  const premium = useMemo(
+    () => premiumForMonth(fromMonth, season, overrides),
+    [fromMonth, season, overrides],
+  );
+  const premiumCents = premiumEdit ?? (premium.source === 'unset' ? '' : String(premium.premiumCents));
+  const premiumOverridden = premiumEdit !== null && premiumEdit !== String(premium.premiumCents);
+  const monthName = MONTH_OF_YEAR_NAMES[(monthOfYear(fromMonth) ?? 1) - 1];
 
   const [marginInput, setMarginInput] = useState('');
   const [priceInput, setPriceInput] = useState('');
@@ -214,10 +237,29 @@ export default function QuoteBuilder({
 
   const warnings = (result?.warnings ?? []).filter((w) => isAdmin || !w.adminOnly);
 
-  const stale = useMemo(
-    () => staleFigures(freshness, settings.staleAfterDays, today).filter((f) => f.stale),
-    [freshness, settings.staleAfterDays, today],
-  );
+  /**
+   * Everything behind this quote that the desk should know about before
+   * sending it: figures that have aged out, and the premium the shipment
+   * month has no figure for at all. The second is not a matter of age — a
+   * seasonal table does not rot, it is either set or it is not.
+   */
+  const alerts = useMemo(() => {
+    const out = staleFigures(freshness, settings.staleAfterDays, today)
+      .filter((f) => f.stale)
+      .map((f) => ({
+        key: f.label,
+        text: `${f.label} — ${Number.isFinite(f.ageDays) ? `last set ${f.ageDays} days ago` : 'never set, still on the seeded figure'}`,
+        where: f.where,
+      }));
+    if (premium.source === 'unset' && !premiumOverridden) {
+      out.unshift({
+        key: 'premium',
+        text: `No quality premium set for ${monthName}, the first shipment month`,
+        where: 'KC & premiums',
+      });
+    }
+    return out;
+  }, [freshness, settings.staleAfterDays, today, premium.source, premiumOverridden, monthName]);
 
   // What the C market does to this quote. Traders need it as much as admin.
   const kcMoves = useMemo(
@@ -337,10 +379,28 @@ export default function QuoteBuilder({
               <input
                 type="number" step="any" inputMode="decimal"
                 aria-label="Quality premium in US cents per pound"
+                placeholder={premium.source === 'unset' ? 'not set' : undefined}
                 value={premiumCents}
-                onChange={(e) => setPremiumCents(e.target.value)}
+                onChange={(e) => setPremiumEdit(e.target.value)}
               />
-              <p className="qc-market-hint">Quality differential over KC</p>
+              <p className={`qc-market-hint${premium.source === 'unset' && !premiumOverridden ? ' is-bad' : ''}`}>
+                {premiumOverridden ? (
+                  <>
+                    Set by hand for this quote.{' '}
+                    <button type="button" className="qc-linkish" onClick={() => setPremiumEdit(null)}>
+                      Use {monthName} again
+                    </button>
+                  </>
+                ) : premium.source === 'override' ? (
+                  <>
+                    {monthLabel(fromMonth)} exception{premium.note ? ` — ${premium.note}` : ''}
+                  </>
+                ) : premium.source === 'seasonal' ? (
+                  <>{monthName} · seasonal differential over KC</>
+                ) : (
+                  <>No premium set for {monthName}</>
+                )}
+              </p>
             </div>
           )}
         </div>
@@ -466,24 +526,25 @@ export default function QuoteBuilder({
             </div>
           )}
 
-          {stale.length > 0 && (
+          {alerts.length > 0 && (
             <div className="qc-stale" role="status">
               <span className="qc-stale-mark" aria-hidden="true">!</span>
               <div>
                 <strong>
-                  {stale.length === 1 ? 'One figure behind this quote is out of date' : `${stale.length} figures behind this quote are out of date`}
+                  {alerts.length === 1
+                    ? 'One figure behind this quote needs attention'
+                    : `${alerts.length} figures behind this quote need attention`}
                 </strong>
                 <ul className="qc-stale-list">
                   {/* A fresh install has every rate on its seed; naming all of
                       them turns the warning into a wall nobody reads. */}
-                  {stale.slice(0, 4).map((f) => (
-                    <li key={f.label}>
-                      {f.label} —{' '}
-                      {Number.isFinite(f.ageDays) ? `last set ${f.ageDays} days ago` : 'never set, still on the seeded figure'}
-                      {isAdmin && <span className="qc-stale-where"> · {f.where}</span>}
+                  {alerts.slice(0, 4).map((a) => (
+                    <li key={a.key}>
+                      {a.text}
+                      {isAdmin && <span className="qc-stale-where"> · {a.where}</span>}
                     </li>
                   ))}
-                  {stale.length > 4 && <li>and {stale.length - 4} more</li>}
+                  {alerts.length > 4 && <li>and {alerts.length - 4} more</li>}
                 </ul>
               </div>
             </div>

@@ -5,6 +5,8 @@ import NumberInput from './NumberInput';
 import PriceText from './PriceText';
 import QuoteSheetDialog from './QuoteSheetDialog';
 import { calculateContract, marginAtPrice, priceAtMargin, validUntil } from '@/lib/pricing/engine';
+import { MONTH_OF_YEAR_NAMES, monthOfYear, premiumForMonth } from '@/lib/pricing/premium';
+import type { PremiumOverride, SeasonalPremium } from '@/lib/store/types';
 import { INCOTERMS, type Incoterm, type QuoteInput, type ReferenceData, type Shipment } from '@/lib/pricing/types';
 import { PRICE_DP, UNIT_LABEL, ceilPrice, fromQuoteUnit, toQuoteUnit, totalInQuoteCurrency } from '@/lib/pricing/units';
 import { monthLabel, monthSpan, type CalendarMonth } from '@/lib/pricing/schedule';
@@ -16,11 +18,13 @@ const marginLabel = (m: number) => `${(m * 100).toFixed((m * 100) % 1 === 0 ? 0 
 export default function MultiShipmentBuilder({
   reference,
   months,
-  defaultPremiumCents,
+  season,
+  overrides,
 }: {
   reference: ReferenceData;
   months: CalendarMonth[];
-  defaultPremiumCents: number;
+  season: SeasonalPremium[];
+  overrides: PremiumOverride[];
 }) {
   const [clientName, setClientName] = useState('');
   const [destinationKey, setDestinationKey] = useState(reference.destinations[0]?.key ?? '');
@@ -29,7 +33,9 @@ export default function MultiShipmentBuilder({
   const [packagingKey, setPackagingKey] = useState(
     reference.packaging.find((p) => p.traderDefault)?.key ?? reference.packaging[0]?.key ?? '',
   );
-  const [premiumCents, setPremiumCents] = useState(String(defaultPremiumCents || ''));
+  // Same rule as the single quote: the shipment window's first month decides,
+  // and a typed figure overrides it for this contract only.
+  const [premiumEdit, setPremiumEdit] = useState<string | null>(null);
   const [fromMonth, setFromMonth] = useState(months[0]?.key ?? '');
   const [toMonth, setToMonth] = useState(months[11]?.key ?? months[months.length - 1]?.key ?? '');
   const [holdMonths, setHoldMonths] = useState(6);
@@ -37,6 +43,14 @@ export default function MultiShipmentBuilder({
   const [margin, setMargin] = useState('16');
   const [target, setTarget] = useState('');
   const [sheet, setSheet] = useState<QuoteSheetData | null>(null);
+
+  const premium = useMemo(
+    () => premiumForMonth(fromMonth, season, overrides),
+    [fromMonth, season, overrides],
+  );
+  const premiumCents = premiumEdit ?? (premium.source === 'unset' ? '' : String(premium.premiumCents));
+  const premiumOverridden = premiumEdit !== null && premiumEdit !== String(premium.premiumCents);
+  const monthName = MONTH_OF_YEAR_NAMES[(monthOfYear(fromMonth) ?? 1) - 1];
 
   const [shipments, setShipments] = useState<Shipment[]>([
     { id: 's1', label: monthLabel(months[0]?.key ?? ''), kcCents: 185.5, bags: 280 },
@@ -201,7 +215,8 @@ export default function MultiShipmentBuilder({
             <span className="qc-market-label">Premium ¢/lb <span className="qc-adminchip">Admin</span></span>
             <input
               type="number" step="any" inputMode="decimal" aria-label="Quality premium"
-              value={premiumCents} onChange={(e) => setPremiumCents(e.target.value)}
+              value={premiumCents} onChange={(e) => setPremiumEdit(e.target.value)}
+              placeholder={premium.source === 'unset' ? 'not set' : undefined}
             />
             <p className="qc-market-hint">Applies to every shipment</p>
           </div>

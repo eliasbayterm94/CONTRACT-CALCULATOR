@@ -21,12 +21,42 @@ export interface KcPrice {
   updatedBy: string | null;
 }
 
-export interface Premium {
-  monthKey: string;
-  qualityKey: string;
+/**
+ * The quality differential over KC, for one month of the calendar year.
+ *
+ * It tracks the harvest, not the futures board — the coffee arriving in
+ * October is a different differential from the coffee arriving in May,
+ * whatever KC month either prices against. Set once, applies every year.
+ */
+export interface SeasonalPremium {
+  /** Month of the year, 1 for January through 12 for December. */
+  month: number;
   premiumCents: number;
   updatedAt: string;
   updatedBy: string | null;
+}
+
+/**
+ * One dated month that departs from the seasonal figure.
+ *
+ * The season is the shape; a short crop or a run on a particular lot is the
+ * exception, and it belongs to that year only.
+ */
+export interface PremiumOverride {
+  /** Calendar month, `YYYY-MM`. */
+  monthKey: string;
+  premiumCents: number;
+  note: string;
+  updatedAt: string;
+  updatedBy: string | null;
+}
+
+/** Which figure a month resolved to, and where it came from. */
+export interface PremiumResolution {
+  monthKey: string;
+  premiumCents: number;
+  source: 'override' | 'seasonal' | 'unset';
+  note: string;
 }
 
 export interface KcSpot {
@@ -64,12 +94,13 @@ export interface AppState {
   destinations: Destination[];
   fx: FxRow[];
   kcPrices: KcPrice[];
-  premiums: Premium[];
+  seasonalPremiums: SeasonalPremium[];
+  premiumOverrides: PremiumOverride[];
   kcSpot: KcSpot | null;
   audit: AuditEntry[];
 }
 
-export const STATE_VERSION = 1;
+export const STATE_VERSION = 2;
 
 /** The audit trail is a rolling window, not an archive. */
 export const AUDIT_LIMIT = 200;

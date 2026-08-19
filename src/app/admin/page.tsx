@@ -3,9 +3,10 @@ import DestinationsEditor from '@/components/admin/DestinationsEditor';
 import PackagingProcessEditor from '@/components/admin/PackagingProcessEditor';
 import PolicyEditor from '@/components/admin/PolicyEditor';
 import { FxEditor, MonthTableEditor } from '@/components/admin/MarketEditor';
+import { OverrideEditor, SeasonEditor } from '@/components/admin/PremiumEditor';
 import CardLabels from '@/components/admin/CardLabels';
 import { ChangeCodeForm, CreateCodeForm, SignInForm, SignOutButton } from '@/components/admin/SignInForm';
-import { saveKcPrices, savePremiums } from '@/app/actions';
+import { saveKcPrices } from '@/app/actions';
 import { currentAdmin, isAdminCodeSet } from '@/lib/auth';
 import {
   getAuditLog,
@@ -15,13 +16,15 @@ import {
   getKcPrices,
   getKcSpot,
   getPackaging,
-  getPremiums,
+  getPremiumOverrides,
+  getSeasonalPremiums,
   getProcesses,
   getReferenceData,
 } from '@/lib/store';
 import { compareMonthKeys, monthKeyLabel, parseMonthKey, upcomingContractMonths } from '@/lib/kc';
 import { DEFAULT_LBS_PER_CONTAINER } from '@/lib/pricing/units';
 import { monthOptions } from '@/lib/pricing/schedule';
+import { premiumForMonth } from '@/lib/pricing/premium';
 import type { QuoteInput } from '@/lib/pricing/types';
 import { shortDate } from '@/lib/format';
 
@@ -29,6 +32,7 @@ export const dynamic = 'force-dynamic';
 
 const SECTIONS = [
   ['market', 'KC & premiums'],
+  ['premium-exceptions', 'Premium exceptions'],
   ['fx', 'Exchange rates'],
   ['policy', 'Pricing policy'],
   ['costs', 'Cost lines'],
@@ -43,7 +47,7 @@ export default async function AdminPage() {
   const codeSet = await isAdminCodeSet();
   const codeManagedByEnv = Boolean(process.env.ADMIN_PASSWORD);
 
-  const [reference, allLines, allDestinations, allPackaging, allProcesses, fxRows, kcPrices, allPremiums, spot, audit] =
+  const [reference, allLines, allDestinations, allPackaging, allProcesses, fxRows, kcPrices, season, overrides, spot, audit] =
     await Promise.all([
       getReferenceData(),
       getCostLines(true),
@@ -52,17 +56,16 @@ export default async function AdminPage() {
       getProcesses(true),
       getFxRows(),
       getKcPrices(),
-      getPremiums(),
+      getSeasonalPremiums(),
+      getPremiumOverrides(),
       getKcSpot(),
       getAuditLog(25),
     ]);
-  const premiums = allPremiums.filter((p) => p.qualityKey === 'standard');
 
   const monthKeys = new Set(kcPrices.map((k) => k.monthKey));
   for (const m of upcomingContractMonths(new Date(), 8)) monthKeys.add(m.key);
   const months = [...monthKeys].sort(compareMonthKeys).filter((k) => parseMonthKey(k));
   const kcByMonth = Object.fromEntries(kcPrices.map((k) => [k.monthKey, k]));
-  const premByMonth = Object.fromEntries(premiums.map((p) => [p.monthKey, p]));
 
   // The quote the cost editor prices against, so an edit's effect is visible
   // before it is saved. Deliberately a typical contract, not an extreme one.
@@ -74,7 +77,8 @@ export default async function AdminPage() {
     packagingKey: reference.packaging.find((p) => p.traderDefault)?.key ?? reference.packaging[0]?.key ?? '',
     bags: 250,
     kcUsdPerLb: (spot?.priceCents ?? kcPrices.find((k) => k.priceCents > 0)?.priceCents ?? 185.5) / 100,
-    premiumUsdPerLb: (premiums.find((p) => p.premiumCents !== 0)?.premiumCents ?? 35) / 100,
+    premiumUsdPerLb:
+      premiumForMonth(window[0]?.key ?? '', season, overrides).premiumCents / 100 || 0.35,
     holdMonths: 2,
     fromMonth: window[0]?.key ?? '',
     toMonth: window[4]?.key ?? window[window.length - 1]?.key ?? '',
@@ -142,23 +146,13 @@ export default async function AdminPage() {
             </section>
 
             <section className="qc-panel" style={{ margin: 0 }}>
-              <MonthTableEditor
-                title="Quality premium by month"
-                note="The green coffee differential over KC"
-                prefix="prem"
-                action={savePremiums}
-                label="Save premiums"
-                locked={locked}
-                rows={months.map((key) => ({
-                  key,
-                  label: monthKeyLabel(key),
-                  value: premByMonth[key]?.premiumCents ?? 0,
-                  updatedAt: premByMonth[key]?.updatedAt ?? null,
-                  updatedBy: premByMonth[key]?.updatedBy ?? null,
-                }))}
-              />
+              <SeasonEditor rows={season} locked={locked} />
             </section>
           </div>
+
+          <section className="qc-panel" id="premium-exceptions">
+            <OverrideEditor rows={overrides} months={monthOptions(new Date(), 24)} locked={locked} />
+          </section>
 
           <section className="qc-panel" id="fx">
             <FxEditor rows={fxRows} locked={locked} />

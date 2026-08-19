@@ -2,7 +2,7 @@
 
 import { useActionState, useEffect, useState, useTransition } from 'react';
 import SaveBar from './SaveBar';
-import { refreshRates, saveFxOverrides, saveKcPrices, savePremiums, type ActionResult } from '@/app/actions';
+import { refreshRates, saveFxOverrides, saveKcPrices, type ActionResult } from '@/app/actions';
 import type { CurrencyCode } from '@/lib/pricing/types';
 import { usdPerCopToTrm } from '@/lib/pricing/units';
 import { plain, shortDate } from '@/lib/format';
@@ -22,7 +22,7 @@ export function MonthTableEditor({
   title: string;
   note: string;
   rows: MonthRow[];
-  prefix: 'kc' | 'prem';
+  prefix: 'kc';
   action: typeof saveKcPrices;
   label: string;
   locked: boolean;

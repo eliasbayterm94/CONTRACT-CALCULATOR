@@ -1,18 +1,26 @@
 import QuoteBuilder from '@/components/QuoteBuilder';
 import { currentAdmin } from '@/lib/auth';
-import { getFxRows, getKcPrices, getKcSpot, getPremiums, getReferenceData } from '@/lib/store';
+import {
+  getFxRows,
+  getKcPrices,
+  getKcSpot,
+  getPremiumOverrides,
+  getReferenceData,
+  getSeasonalPremiums,
+} from '@/lib/store';
 import { compareMonthKeys } from '@/lib/kc';
 import { monthOptions } from '@/lib/pricing/schedule';
 
 export const dynamic = 'force-dynamic';
 
 export default async function QuotePage() {
-  const [admin, reference, spot, allKc, allPremiums, fxRows] = await Promise.all([
+  const [admin, reference, spot, allKc, season, overrides, fxRows] = await Promise.all([
     currentAdmin(),
     getReferenceData(),
     getKcSpot(),
     getKcPrices(),
-    getPremiums(),
+    getSeasonalPremiums(),
+    getPremiumOverrides(),
     getFxRows(),
   ]);
 
@@ -23,8 +31,7 @@ export default async function QuotePage() {
     .sort((a, b) => compareMonthKeys(a.monthKey, b.monthKey));
   const defaultKcCents = spot?.priceCents ?? kcPrices[0]?.priceCents ?? 0;
 
-  const premiums = allPremiums.filter((p) => p.qualityKey === 'standard' && p.premiumCents !== 0);
-  const defaultPremiumCents = premiums[0]?.premiumCents ?? 0;
+
 
   // A seeded row was never set by anyone — it is a placeholder, and the desk
   // should hear about it as loudly as a rate nobody has touched in a month.
@@ -36,11 +43,6 @@ export default async function QuotePage() {
       label: 'KC futures',
       where: 'KC & premiums',
       updatedAt: spot?.asOf ?? setAt(kcPrices[0]?.updatedAt ?? null, kcPrices[0]?.updatedBy ?? null),
-    },
-    {
-      label: 'Quality premium',
-      where: 'KC & premiums',
-      updatedAt: setAt(premiums[0]?.updatedAt ?? null, premiums[0]?.updatedBy ?? null),
     },
     ...fxRows
       .filter((row) => row.currency !== 'USD')
@@ -56,9 +58,10 @@ export default async function QuotePage() {
       reference={reference}
       freshness={freshness}
       months={monthOptions(new Date(), 24)}
+      season={season}
+      overrides={overrides}
       isAdmin={Boolean(admin)}
       defaultKcCents={defaultKcCents}
-      defaultPremiumCents={defaultPremiumCents}
       kcSpot={spot ? { priceCents: spot.priceCents, asOf: spot.asOf, source: spot.source } : null}
     />
   );

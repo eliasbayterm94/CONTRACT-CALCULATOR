@@ -7,7 +7,8 @@ import {
   type FxRow,
   type KcPrice,
   type KcSpot,
-  type Premium,
+  type PremiumOverride,
+  type SeasonalPremium,
   type StoreDriver,
 } from './types';
 import {
@@ -21,7 +22,15 @@ import {
 import { upcomingContractMonths } from '../kc';
 import type { CurrencyCode, EngineSettings, ReferenceData } from '../pricing/types';
 
-export type { FxRow, KcPrice, KcSpot, Premium, AuditEntry } from './types';
+export type {
+  FxRow,
+  KcPrice,
+  KcSpot,
+  PremiumOverride,
+  PremiumResolution,
+  SeasonalPremium,
+  AuditEntry,
+} from './types';
 
 let driver: Promise<StoreDriver> | null = null;
 let cached: AppState | null = null;
@@ -51,13 +60,13 @@ function seedState(now = new Date()): AppState {
       fetchedAt: stamp,
     })),
     kcPrices: months.map((m) => ({ monthKey: m.key, priceCents: 0, updatedAt: stamp, updatedBy: 'seed' })),
-    premiums: months.map((m) => ({
-      monthKey: m.key,
-      qualityKey: 'standard',
+    seasonalPremiums: Array.from({ length: 12 }, (_, i) => ({
+      month: i + 1,
       premiumCents: 0,
       updatedAt: stamp,
       updatedBy: 'seed',
     })),
+    premiumOverrides: [],
     kcSpot: null,
     audit: [],
   };
@@ -82,14 +91,53 @@ export async function loadState(): Promise<AppState> {
 
 async function readState(): Promise<AppState> {
   const stored = await (await getDriver()).load();
-  if (stored && stored.version === STATE_VERSION) {
-    cached = stored;
-    return cached;
+  if (stored) {
+    const migrated = migrate(stored);
+    if (migrated) {
+      // Only write when the shape actually moved, so a normal read stays a read.
+      if (migrated !== stored) await (await getDriver()).save(migrated);
+      cached = migrated;
+      return cached;
+    }
   }
   const fresh = seedState();
   await (await getDriver()).save(fresh);
   cached = fresh;
   return fresh;
+}
+
+/**
+ * Bring a stored document up to the current shape, or give up on it.
+ *
+ * Re-seeding on a version bump would throw away the desk's costed lines and
+ * rates along with the shape change. Every migration here has to carry the
+ * configuration across, or say plainly that it cannot.
+ */
+export function migrate(stored: AppState): AppState | null {
+  if (stored.version === STATE_VERSION) return stored;
+
+  if (stored.version === 1) {
+    const stamp = new Date().toISOString();
+    // Version 1 kept premiums against KC contract months, which is the wrong
+    // axis for a harvest differential — it left a shipment month like August
+    // with no row at all. Those figures cannot be mapped onto calendar months
+    // without inventing them, so the seasonal table starts empty and the desk
+    // sets it once. Everything else carries across untouched.
+    const { premiums: _dropped, ...rest } = stored as AppState & { premiums?: unknown };
+    return {
+      ...rest,
+      version: 2,
+      seasonalPremiums: Array.from({ length: 12 }, (_, i) => ({
+        month: i + 1,
+        premiumCents: 0,
+        updatedAt: stamp,
+        updatedBy: 'seed',
+      })),
+      premiumOverrides: [],
+    };
+  }
+
+  return null;
 }
 
 /** Read, change, write. The document is small enough to rewrite whole. */
@@ -206,21 +254,46 @@ export async function setKcPrice(monthKey: string, priceCents: number, actor: st
   });
 }
 
-export async function getPremiums(): Promise<Premium[]> {
-  return (await loadState()).premiums;
+export async function getSeasonalPremiums(): Promise<SeasonalPremium[]> {
+  const state = await loadState();
+  return [...state.seasonalPremiums].sort((a, b) => a.month - b.month);
 }
 
-export async function setPremium(
-  monthKey: string,
-  qualityKey: string,
+export async function getPremiumOverrides(): Promise<PremiumOverride[]> {
+  const state = await loadState();
+  return [...state.premiumOverrides].sort((a, b) => a.monthKey.localeCompare(b.monthKey));
+}
+
+export async function setSeasonalPremium(
+  month: number,
   premiumCents: number,
   actor: string,
 ): Promise<void> {
   await mutateState((state) => {
-    const existing = state.premiums.find((p) => p.monthKey === monthKey && p.qualityKey === qualityKey);
     const stamp = new Date().toISOString();
+    const existing = state.seasonalPremiums.find((p) => p.month === month);
     if (existing) Object.assign(existing, { premiumCents, updatedAt: stamp, updatedBy: actor });
-    else state.premiums.push({ monthKey, qualityKey, premiumCents, updatedAt: stamp, updatedBy: actor });
+    else state.seasonalPremiums.push({ month, premiumCents, updatedAt: stamp, updatedBy: actor });
+  });
+}
+
+export async function setPremiumOverride(
+  monthKey: string,
+  premiumCents: number,
+  note: string,
+  actor: string,
+): Promise<void> {
+  await mutateState((state) => {
+    const stamp = new Date().toISOString();
+    const existing = state.premiumOverrides.find((p) => p.monthKey === monthKey);
+    if (existing) Object.assign(existing, { premiumCents, note, updatedAt: stamp, updatedBy: actor });
+    else state.premiumOverrides.push({ monthKey, premiumCents, note, updatedAt: stamp, updatedBy: actor });
+  });
+}
+
+export async function clearPremiumOverride(monthKey: string): Promise<void> {
+  await mutateState((state) => {
+    state.premiumOverrides = state.premiumOverrides.filter((p) => p.monthKey !== monthKey);
   });
 }
 

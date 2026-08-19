@@ -15,7 +15,16 @@ import {
   setAdminCode,
   verifyAdminCode,
 } from '@/lib/auth';
-import { getFxRows, logAudit, mutateState, setKcPrice, setPremium, setSetting } from '@/lib/store';
+import {
+  clearPremiumOverride,
+  getFxRows,
+  logAudit,
+  mutateState,
+  setKcPrice,
+  setPremiumOverride,
+  setSeasonalPremium,
+  setSetting,
+} from '@/lib/store';
 import { clearFxOverride, overrideFxRate, refreshFxRates } from '@/lib/fx';
 import type { CurrencyCode, QuoteUnit } from '@/lib/pricing/types';
 import { trmToUsdPerCop } from '@/lib/pricing/units';
@@ -171,22 +180,69 @@ export async function saveKcPrices(_prev: ActionResult | null, form: FormData): 
   return { ok: true, message: `Updated ${count} contract month${count === 1 ? '' : 's'}.` };
 }
 
-export async function savePremiums(_prev: ActionResult | null, form: FormData): Promise<ActionResult> {
+/** The seasonal table: one differential per month of the calendar year. */
+export async function saveSeasonalPremiums(
+  _prev: ActionResult | null,
+  form: FormData,
+): Promise<ActionResult> {
   const g = await guard();
   if ('ok' in g) return g;
   let count = 0;
   for (const [key, value] of form.entries()) {
-    if (!key.startsWith('prem_')) continue;
+    if (!key.startsWith('season_')) continue;
+    const month = Number(key.slice(7));
+    if (!Number.isInteger(month) || month < 1 || month > 12) continue;
     const raw = String(value).trim();
+    // Empty means "leave this month alone". Zero is a figure; blank is not.
     if (raw === '') continue;
     const cents = Number(raw.replace(/,/g, ''));
     if (!Number.isFinite(cents)) continue;
-    await setPremium(key.slice(5), 'standard', cents, g.actor);
+    await setSeasonalPremium(month, cents, g.actor);
     count += 1;
   }
-  await logAudit(g.actor, 'premiums', null, 'bulk_update', { count });
+  await logAudit(g.actor, 'seasonal_premiums', null, 'bulk_update', { count });
   refreshAll();
-  return { ok: true, message: `Updated ${count} monthly premium${count === 1 ? '' : 's'}.` };
+  return { ok: true, message: `Updated ${count} month${count === 1 ? '' : 's'} of the season.` };
+}
+
+/** Dated exceptions: a month that departs from its season, plus why. */
+export async function savePremiumOverrides(
+  _prev: ActionResult | null,
+  form: FormData,
+): Promise<ActionResult> {
+  const g = await guard();
+  if ('ok' in g) return g;
+
+  const removed: string[] = [];
+  for (const monthKey of form.getAll('override_key').map(String)) {
+    if (form.get(`override_drop_${monthKey}`)) {
+      await clearPremiumOverride(monthKey);
+      removed.push(monthKey);
+      continue;
+    }
+    const cents = num(form, `override_value_${monthKey}`);
+    if (!Number.isFinite(cents)) continue;
+    await setPremiumOverride(monthKey, cents, str(form, `override_note_${monthKey}`), g.actor);
+  }
+
+  const addMonth = str(form, 'override_new_month');
+  const addRaw = String(form.get('override_new_value') ?? '').trim();
+  let added = '';
+  if (addMonth && addRaw !== '') {
+    const cents = Number(addRaw.replace(/,/g, ''));
+    if (!Number.isFinite(cents)) {
+      return { ok: false, message: 'The new exception needs a number.' };
+    }
+    await setPremiumOverride(addMonth, cents, str(form, 'override_new_note'), g.actor);
+    added = addMonth;
+  }
+
+  await logAudit(g.actor, 'premium_overrides', null, 'bulk_update', { removed, added });
+  refreshAll();
+  const parts: string[] = [];
+  if (added) parts.push(`Added ${added}.`);
+  if (removed.length) parts.push(`Removed ${removed.join(', ')}.`);
+  return { ok: true, message: parts.join(' ') || 'Exceptions saved.' };
 }
 
 export async function saveCostLines(_prev: ActionResult | null, form: FormData): Promise<ActionResult> {
