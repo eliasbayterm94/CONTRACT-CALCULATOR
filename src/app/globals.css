@@ -2095,6 +2095,24 @@ tfoot.qc-total td { border-top: 2px solid var(--fc-navy); font-weight: var(--fc-
 .qc-switch:has(input:checked) { border-color: var(--fc-navy); background: #fff; }
 
 /* A waived fixed cost changes the price, so the quote says so out loud. */
+/*
+ * The coffee type, when it is not the one a quote is assumed to be.
+ *
+ * Sits in the headline rather than beside the price, because it qualifies
+ * what is being quoted rather than what it costs.
+ */
+.qc-hero-label {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+}
+.qc-typetag {
+  display: inline-flex; align-items: center; gap: 5px;
+  background: var(--fc-yellow); color: var(--fc-navy);
+  border-radius: var(--fc-radius-pill); padding: 3px 10px;
+  font-family: var(--fc-font-display); font-weight: var(--fc-fw-bold);
+  font-size: 9.5px; letter-spacing: var(--fc-ls-eyebrow); text-transform: uppercase;
+  white-space: nowrap;
+}
+
 .qc-waived-flag {
   display: inline-flex; align-items: center; gap: 5px;
   background: rgba(231,226,68,.16);

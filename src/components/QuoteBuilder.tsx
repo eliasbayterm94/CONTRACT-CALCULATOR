@@ -300,6 +300,20 @@ export default function QuoteBuilder({
 
   // Under the floor is not a footnote. It is the one thing on this screen that
   // has to stop someone, so it is derived once and shouted about everywhere.
+  /**
+   * Is this a quote for something other than the plain lot?
+   *
+   * The type the select opens on is what a quote is assumed to be. Anything
+   * else changes the price without changing anything the eye lands on, so it
+   * gets named in the headline — a decaf quoted as though it were washed is a
+   * mistake nobody catches until the contract.
+   */
+  const defaultType = reference.processes[0];
+  const flaggedType =
+    processKey !== defaultType?.key
+      ? reference.processes.find((p) => p.key === processKey) ?? null
+      : null;
+
   const floorMargin = result?.band.minMargin ?? settings.minMargin;
   const belowFloor = Boolean(activeRung && activeRung.margin < floorMargin - 1e-9);
   const shortfallUsdPerLb =
@@ -641,7 +655,19 @@ export default function QuoteBuilder({
               <div className={`qc-headline${belowFloor ? ' is-below-floor' : ''}`}>
                 <div className="qc-hero">
                   <div className="qc-hero-label">
-                    Quote at {marginInput.trim() === '' ? `floor margin ${marginLabel(floorMargin)}` : marginLabel(activeRung.margin)}
+                    <span>
+                      Quote at {marginInput.trim() === '' ? `floor margin ${marginLabel(floorMargin)}` : marginLabel(activeRung.margin)}
+                    </span>
+                    {flaggedType && (
+                      <span className="qc-typetag">
+                        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" aria-hidden="true">
+                          <path d="M20.6 13.4 12 22l-9-9V3h10l7.6 7.6a2 2 0 0 1 0 2.8Z" />
+                          <circle cx="7.5" cy="7.5" r="1.2" fill="currentColor" />
+                        </svg>
+                        {flaggedType.label}
+                        {flaggedType.premiumCents ? ` +${plain(flaggedType.premiumCents, 0)}¢/lb` : ''}
+                      </span>
+                    )}
                   </div>
                   <div className="qc-hero-price">
                     <span className="qc-hero-big">

@@ -193,6 +193,13 @@ export default function MultiShipmentBuilder({
   );
   const floorMargin = band.minMargin;
 
+  // Same rule as the single quote: anything but the type the select opens on
+  // is named in the headline, so a contract cannot be built on the wrong one.
+  const flaggedType =
+    processKey !== reference.processes[0]?.key
+      ? reference.processes.find((p) => p.key === processKey) ?? null
+      : null;
+
   const inQuote = (usd: number) =>
     destination ? totalInQuoteCurrency(usd, destination.quoteCurrency, reference.fx) : usd;
 
@@ -414,7 +421,19 @@ export default function MultiShipmentBuilder({
           <div className="qc-consolidated">
             <div className="qc-cons-grid">
               <div>
-                <div className="qc-hero-label">Consolidated price at {marginLabel(marginValue)}</div>
+                <div className="qc-hero-label">
+                  <span>Consolidated price at {marginLabel(marginValue)}</span>
+                  {flaggedType && (
+                    <span className="qc-typetag">
+                      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" aria-hidden="true">
+                        <path d="M20.6 13.4 12 22l-9-9V3h10l7.6 7.6a2 2 0 0 1 0 2.8Z" />
+                        <circle cx="7.5" cy="7.5" r="1.2" fill="currentColor" />
+                      </svg>
+                      {flaggedType.label}
+                      {flaggedType.premiumCents ? ` +${plain(flaggedType.premiumCents, 0)}¢/lb` : ''}
+                    </span>
+                  )}
+                </div>
                 <div className="qc-hero-price">
                   <span className="qc-hero-big"><PriceText value={contract.consolidatedDisplay} currency={destination.quoteCurrency} /></span>
                   <span className="qc-hero-unit">per {UNIT_LABEL[destination.quoteUnit]} · {destination.label} {incoterm}</span>
