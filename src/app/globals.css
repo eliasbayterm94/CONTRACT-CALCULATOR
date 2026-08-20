@@ -1617,6 +1617,48 @@ tfoot.qc-total td { border-top: 2px solid var(--fc-navy); font-weight: var(--fc-
   border-top: 1px solid var(--fc-ink-100); font-size: 11px; color: var(--fc-ink-500);
 }
 
+/* ── Seeing the desk as a trader ───────────────────────────────────── */
+.qc-viewtoggle {
+  display: inline-flex; align-items: center; gap: 8px;
+  background: none; border: 0; padding: 4px 6px; cursor: pointer;
+  min-height: 34px; color: var(--fc-ink-500);
+}
+.qc-viewtoggle:disabled { opacity: .5; cursor: wait; }
+.qc-viewtoggle-track {
+  position: relative; width: 32px; height: 18px; border-radius: 9px;
+  background: var(--fc-ink-100); transition: background var(--fc-dur-fast) var(--fc-ease-out);
+  flex: 0 0 auto;
+}
+.qc-viewtoggle-knob {
+  position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%;
+  background: #fff; box-shadow: 0 1px 2px rgba(12, 12, 11, .3);
+  transition: transform var(--fc-dur-fast) var(--fc-ease-out);
+}
+.qc-viewtoggle.is-on .qc-viewtoggle-track { background: var(--fc-navy); }
+.qc-viewtoggle.is-on .qc-viewtoggle-knob { transform: translateX(14px); }
+.qc-viewtoggle.is-on { color: var(--fc-navy); }
+.qc-viewtoggle-label {
+  font-family: var(--fc-font-display); font-weight: var(--fc-fw-bold);
+  font-size: 9.5px; letter-spacing: var(--fc-ls-eyebrow); text-transform: uppercase;
+  white-space: nowrap;
+}
+@media (max-width: 599px) { .qc-viewtoggle-label { display: none; } }
+
+.qc-preview-bar {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  padding: 10px 22px; background: var(--fc-navy); color: rgba(255, 255, 255, .82);
+  font-size: 12px; line-height: 1.45;
+}
+.qc-preview-bar > span:nth-child(2) { flex: 1 1 260px; min-width: 0; }
+.qc-preview-bar strong { color: #fff; }
+.qc-preview-eye { display: flex; color: var(--fc-yellow); flex: 0 0 auto; }
+.qc-preview-bar .fc-btn {
+  flex: 0 0 auto; min-height: 32px;
+  border-color: rgba(255, 255, 255, .3); color: #fff;
+}
+.qc-preview-bar .fc-btn:hover { background: rgba(255, 255, 255, .12); }
+@media (max-width: 719px) { .qc-preview-bar { padding: 10px 14px; } }
+
 /* ── Volume brackets ───────────────────────────────────────────────── */
 .qc-brackets { margin-top: 20px; padding-top: 18px; border-top: 1px solid var(--fc-ink-100); }
 .qc-brackets-head { margin-bottom: 12px; }

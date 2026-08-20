@@ -13,6 +13,7 @@ import {
   recordFailedAttempt,
   requireAdmin,
   setAdminCode,
+  VIEW_COOKIE,
   verifyAdminCode,
 } from '@/lib/auth';
 import {
@@ -144,6 +145,7 @@ export async function signOut(): Promise<void> {
   const actor = (await currentAdmin()) ?? 'unknown';
   const store = await cookies();
   store.delete(COOKIE_NAME);
+  store.delete(VIEW_COOKIE);
   await logAudit(actor, 'session', null, 'sign_out');
   revalidatePath('/', 'layout');
 }
@@ -160,6 +162,32 @@ function refreshAll(): void {
   revalidatePath('/');
   revalidatePath('/multi');
   revalidatePath('/admin');
+}
+
+/**
+ * Look at the desk as a trader would, or stop.
+ *
+ * Nothing about the session changes — this only tells the screens to draw the
+ * trader's version. An admin in the preview keeps every right they had, so
+ * there is no way to get stuck on the wrong side of it.
+ */
+export async function setTraderView(on: boolean): Promise<void> {
+  // Only an admin has anything to preview. A stale tab calling this after the
+  // session lapsed should do nothing, not replace the page with an error.
+  if (!(await currentAdmin())) return;
+  const store = await cookies();
+  if (on) {
+    store.set(VIEW_COOKIE, 'trader', {
+      httpOnly: true,
+      sameSite: 'lax',
+      secure: process.env.NODE_ENV === 'production',
+      path: '/',
+      maxAge: COOKIE_MAX_AGE,
+    });
+  } else {
+    store.delete(VIEW_COOKIE);
+  }
+  refreshAll();
 }
 
 /* ------------------------------------------------------- admin mutations -- */

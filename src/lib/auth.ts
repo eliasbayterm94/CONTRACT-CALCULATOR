@@ -147,5 +147,23 @@ export async function requireAdmin(): Promise<string> {
 
 export class AuthError extends Error {}
 
+/**
+ * Is the admin looking at the desk through a trader's eyes?
+ *
+ * A preview of what is hidden, not a change of who you are. The session and
+ * every guard still see the real admin — only what the screen chooses to draw
+ * follows this, which is why an admin previewing can never lock themselves
+ * out of getting back.
+ */
+export const VIEW_COOKIE = 'fc_view';
+
+export async function viewingAsTrader(): Promise<boolean> {
+  try {
+    return (await cookies()).get(VIEW_COOKIE)?.value === 'trader';
+  } catch {
+    return false;
+  }
+}
+
 export const COOKIE_NAME = COOKIE;
 export const COOKIE_MAX_AGE = MAX_AGE_SECONDS;

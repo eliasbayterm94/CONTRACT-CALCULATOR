@@ -1,5 +1,5 @@
 import QuoteBuilder from '@/components/QuoteBuilder';
-import { currentAdmin } from '@/lib/auth';
+import { currentAdmin, viewingAsTrader } from '@/lib/auth';
 import {
   getFxRows,
   getKcPrices,
@@ -14,8 +14,9 @@ import { monthOptions } from '@/lib/pricing/schedule';
 export const dynamic = 'force-dynamic';
 
 export default async function QuotePage() {
-  const [admin, reference, spot, allKc, season, overrides, fxRows] = await Promise.all([
+  const [admin, previewing, reference, spot, allKc, season, overrides, fxRows] = await Promise.all([
     currentAdmin(),
+    viewingAsTrader(),
     getReferenceData(),
     getKcSpot(),
     getKcPrices(),
@@ -60,7 +61,7 @@ export default async function QuotePage() {
       months={monthOptions(new Date(), 24)}
       season={season}
       overrides={overrides}
-      isAdmin={Boolean(admin)}
+      isAdmin={Boolean(admin) && !previewing}
       defaultKcCents={defaultKcCents}
       kcSpot={spot ? { priceCents: spot.priceCents, asOf: spot.asOf, source: spot.source } : null}
     />

@@ -2,7 +2,8 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useTransition } from 'react';
+import { setTraderView } from '@/app/actions';
 
 interface NavItem {
   href: string;
@@ -38,13 +39,20 @@ const ADMIN: NavItem[] = [{ href: '/admin', label: 'Rates & costs', icon: Slider
 
 export default function AppShell({
   admin,
+  realAdmin,
+  previewing,
   children,
 }: {
+  /** Who the screens should draw for — null while an admin previews the trader view. */
   admin: string | null;
+  /** Who is actually signed in. Never null just because of a preview. */
+  realAdmin: string | null;
+  previewing: boolean;
   children: React.ReactNode;
 }) {
   const pathname = usePathname();
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [switching, startSwitch] = useTransition();
 
   // A tap that navigates should also put the drawer away.
   useEffect(() => setDrawerOpen(false), [pathname]);
@@ -144,12 +152,48 @@ export default function AppShell({
             <span className="fc-topbar-page-title">{title}</span>
           </div>
           <div className="qc-topbar-right">
+            {realAdmin && (
+              <button
+                type="button"
+                className={`qc-viewtoggle${previewing ? ' is-on' : ''}`}
+                aria-pressed={previewing}
+                disabled={switching}
+                onClick={() => startSwitch(() => { void setTraderView(!previewing); })}
+                title={previewing ? 'Back to the admin view' : 'See the desk as a trader does'}
+              >
+                <span className="qc-viewtoggle-track"><span className="qc-viewtoggle-knob" /></span>
+                <span className="qc-viewtoggle-label">Trader view</span>
+              </button>
+            )}
             <span className={`qc-whoami${admin ? ' is-admin' : ''}`}>
               <span className="qc-dot" />
               <span className="qc-name">{admin ? `${admin} · Admin` : 'Trading'}</span>
             </span>
           </div>
         </header>
+
+        {previewing && (
+          <div className="qc-preview-bar" role="status">
+            <span className="qc-preview-eye" aria-hidden="true">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M1.5 12S5 5.5 12 5.5 22.5 12 22.5 12 19 18.5 12 18.5 1.5 12 1.5 12Z" />
+                <circle cx="12" cy="12" r="3" />
+              </svg>
+            </span>
+            <span>
+              Trader view — costs, margins and the admin screens are hidden, exactly as your desk
+              sees them. You are still signed in as <strong>{realAdmin}</strong>.
+            </span>
+            <button
+              type="button"
+              className="fc-btn fc-btn-ghost"
+              disabled={switching}
+              onClick={() => startSwitch(() => { void setTraderView(false); })}
+            >
+              {switching ? 'Leaving…' : 'Back to admin'}
+            </button>
+          </div>
+        )}
 
         <div className="fc-content">{children}</div>
 

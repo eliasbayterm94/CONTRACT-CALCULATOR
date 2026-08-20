@@ -1,6 +1,6 @@
 import type { Metadata } from 'next';
 import AppShell from '@/components/shell/AppShell';
-import { currentAdmin } from '@/lib/auth';
+import { currentAdmin, viewingAsTrader } from '@/lib/auth';
 import './globals.css';
 
 export const metadata: Metadata = {
@@ -15,7 +15,10 @@ export const viewport = {
 };
 
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
-  const admin = await currentAdmin();
+  const [admin, previewing] = await Promise.all([currentAdmin(), viewingAsTrader()]);
+  // The shell draws the trader's world while previewing, but it always knows
+  // there is a real admin behind it — that is what keeps the way back visible.
+  const asTrader = Boolean(admin) && previewing;
   return (
     <html lang="en">
       <head>
@@ -27,7 +30,9 @@ export default async function RootLayout({ children }: { children: React.ReactNo
         />
       </head>
       <body>
-        <AppShell admin={admin}>{children}</AppShell>
+        <AppShell admin={asTrader ? null : admin} realAdmin={admin} previewing={asTrader}>
+          {children}
+        </AppShell>
       </body>
     </html>
   );
