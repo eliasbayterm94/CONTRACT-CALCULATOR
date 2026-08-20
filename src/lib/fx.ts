@@ -1,4 +1,4 @@
-import { getFxRows, logAudit, mutateState } from './store';
+import { appendAudit, getFxRows, mutateState } from './store';
 import type { CurrencyCode } from './pricing/types';
 import { trmToUsdPerCop } from './pricing/units';
 
@@ -55,14 +55,8 @@ export async function refreshFxRates(actor: string): Promise<FxFetchResult> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 10_000);
 
-  /** A pinned rate is never touched by a fetch. */
-  const write = async (currency: CurrencyCode, usdPerUnit: number, source: string) => {
-    await mutateState((state) => {
-      const row = state.fx.find((r) => r.currency === currency);
-      if (!row || row.isOverride) return;
-      Object.assign(row, { usdPerUnit, source, fetchedAt: new Date().toISOString() });
-    });
-  };
+  /** Collected first, written once. A pinned rate is never touched by a fetch. */
+  const fetched: Array<[CurrencyCode, number, string]> = [];
 
   try {
     const wanted = (['EUR', 'GBP', 'AUD', 'CAD'] as CurrencyCode[]).filter(
@@ -78,7 +72,7 @@ export async function refreshFxRates(actor: string): Promise<FxFetchResult> {
 
     if (trm.status === 'fulfilled') {
       const usdPerCop = trmToUsdPerCop(trm.value);
-      await write('COP', usdPerCop, `TRM ${trm.value.toFixed(2)} (Banco de la República)`);
+      fetched.push(['COP', usdPerCop, `TRM ${trm.value.toFixed(2)} (Banco de la República)`]);
       result.updated.push({
         currency: 'COP',
         usdPerUnit: usdPerCop,
@@ -90,7 +84,7 @@ export async function refreshFxRates(actor: string): Promise<FxFetchResult> {
 
     if (ecb.status === 'fulfilled') {
       for (const [code, usdPerUnit] of Object.entries(ecb.value)) {
-        await write(code as CurrencyCode, usdPerUnit, 'ECB (Frankfurter)');
+        fetched.push([code as CurrencyCode, usdPerUnit, 'ECB (Frankfurter)']);
         result.updated.push({ currency: code as CurrencyCode, usdPerUnit, source: 'ECB' });
       }
     } else {
@@ -100,31 +94,19 @@ export async function refreshFxRates(actor: string): Promise<FxFetchResult> {
     clearTimeout(timer);
   }
 
-  await logAudit(actor, 'fx_rates', null, 'refresh', result);
+  // One document write for every rate that came back, plus the log entry.
+  // Each rate on its own was a separate round trip to a store over the wire.
+  await mutateState((state) => {
+    const stamp = new Date().toISOString();
+    for (const [currency, usdPerUnit, source] of fetched) {
+      const row = state.fx.find((r) => r.currency === currency);
+      if (!row || row.isOverride) continue;
+      Object.assign(row, { usdPerUnit, source, fetchedAt: stamp });
+    }
+    appendAudit(state, actor, 'fx_rates', null, 'refresh', result);
+  });
   return result;
 }
 
-/** Pin a rate by hand — a booked forward, or a hedged TRM. */
-export async function overrideFxRate(
-  currency: CurrencyCode,
-  usdPerUnit: number,
-  actor: string,
-  note = 'Manual override',
-): Promise<void> {
-  await mutateState((state) => {
-    const row = state.fx.find((r) => r.currency === currency);
-    const fetchedAt = new Date().toISOString();
-    if (row) Object.assign(row, { usdPerUnit, source: note, isOverride: true, fetchedAt });
-    else state.fx.push({ currency, usdPerUnit, source: note, isOverride: true, fetchedAt });
-  });
-  await logAudit(actor, 'fx_rates', currency, 'override', { usdPerUnit, note });
-}
 
 /** Release an override so the currency tracks its live source again. */
-export async function clearFxOverride(currency: CurrencyCode, actor: string): Promise<void> {
-  await mutateState((state) => {
-    const row = state.fx.find((r) => r.currency === currency);
-    if (row) row.isOverride = false;
-  });
-  await logAudit(actor, 'fx_rates', currency, 'clear_override');
-}

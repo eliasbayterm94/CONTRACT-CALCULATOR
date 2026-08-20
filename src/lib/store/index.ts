@@ -254,6 +254,57 @@ export async function setKcPrice(monthKey: string, priceCents: number, actor: st
   });
 }
 
+/* The pure half of the setters below: apply to a state the caller already
+   holds, so many rows cost one write rather than one write each. */
+
+export function applyKcPrice(state: AppState, monthKey: string, priceCents: number, actor: string): void {
+  const stamp = new Date().toISOString();
+  const row = state.kcPrices.find((k) => k.monthKey === monthKey);
+  if (row) Object.assign(row, { priceCents, updatedAt: stamp, updatedBy: actor });
+  else state.kcPrices.push({ monthKey, priceCents, updatedAt: stamp, updatedBy: actor });
+}
+
+export function applySeasonalPremium(state: AppState, month: number, premiumCents: number, actor: string): void {
+  const stamp = new Date().toISOString();
+  const row = state.seasonalPremiums.find((p) => p.month === month);
+  if (row) Object.assign(row, { premiumCents, updatedAt: stamp, updatedBy: actor });
+  else state.seasonalPremiums.push({ month, premiumCents, updatedAt: stamp, updatedBy: actor });
+}
+
+export function applyPremiumOverride(
+  state: AppState,
+  monthKey: string,
+  premiumCents: number,
+  note: string,
+  actor: string,
+): void {
+  const stamp = new Date().toISOString();
+  const row = state.premiumOverrides.find((p) => p.monthKey === monthKey);
+  if (row) Object.assign(row, { premiumCents, note, updatedAt: stamp, updatedBy: actor });
+  else state.premiumOverrides.push({ monthKey, premiumCents, note, updatedAt: stamp, updatedBy: actor });
+}
+
+export function applyClearPremiumOverride(state: AppState, monthKey: string): void {
+  state.premiumOverrides = state.premiumOverrides.filter((p) => p.monthKey !== monthKey);
+}
+
+export function applyFxOverride(
+  state: AppState,
+  currency: CurrencyCode,
+  usdPerUnit: number,
+  source: string,
+): void {
+  const fetchedAt = new Date().toISOString();
+  const row = state.fx.find((r) => r.currency === currency);
+  if (row) Object.assign(row, { usdPerUnit, source, isOverride: true, fetchedAt });
+  else state.fx.push({ currency, usdPerUnit, source, isOverride: true, fetchedAt });
+}
+
+export function applyClearFxOverride(state: AppState, currency: CurrencyCode): void {
+  const row = state.fx.find((r) => r.currency === currency);
+  if (row) row.isOverride = false;
+}
+
 export async function getSeasonalPremiums(): Promise<SeasonalPremium[]> {
   const state = await loadState();
   return [...state.seasonalPremiums].sort((a, b) => a.month - b.month);
@@ -308,6 +359,35 @@ export async function setKcSpot(priceCents: number, asOf: string, source: string
 }
 
 /* ---------------------------------------------------------------- audit -- */
+
+/**
+ * Add an audit entry to a state already being mutated.
+ *
+ * The write-through version below is a whole document read and write of its
+ * own. Beside a save that is doing the same thing, that is two round trips to
+ * a store that lives over the network, and two chances to fail. Bulk saves
+ * fold their entry in here instead.
+ */
+export function appendAudit(
+  state: AppState,
+  actor: string,
+  entity: string,
+  entityId: string | null,
+  action: string,
+  detail?: unknown,
+): void {
+  const id = (state.audit[0]?.id ?? 0) + 1;
+  state.audit.unshift({
+    id,
+    at: new Date().toISOString(),
+    actor,
+    entity,
+    entityId,
+    action,
+    detail: detail === undefined ? null : JSON.stringify(detail),
+  });
+  if (state.audit.length > AUDIT_LIMIT) state.audit.length = AUDIT_LIMIT;
+}
 
 export async function logAudit(
   actor: string,

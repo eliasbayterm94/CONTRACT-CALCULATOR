@@ -16,16 +16,19 @@ import {
   verifyAdminCode,
 } from '@/lib/auth';
 import {
-  clearPremiumOverride,
-  getFxRows,
+  appendAudit,
+  applyClearFxOverride,
+  applyClearPremiumOverride,
+  applyFxOverride,
+  applyKcPrice,
+  applyPremiumOverride,
+  applySeasonalPremium,
   logAudit,
   mutateState,
-  setKcPrice,
-  setPremiumOverride,
-  setSeasonalPremium,
   setSetting,
 } from '@/lib/store';
-import { clearFxOverride, overrideFxRate, refreshFxRates } from '@/lib/fx';
+import { refreshFxRates } from '@/lib/fx';
+import { guarded } from '@/lib/actionGuard';
 import type { CurrencyCode, QuoteUnit } from '@/lib/pricing/types';
 import { trmToUsdPerCop } from '@/lib/pricing/units';
 
@@ -65,7 +68,7 @@ function waitMessage(seconds: number): string {
 }
 
 /** First run: whoever opens admin first chooses the code. */
-export async function createAdminCode(
+async function createAdminCodeImpl(
   _prev: ActionResult | null,
   form: FormData,
 ): Promise<ActionResult> {
@@ -87,7 +90,7 @@ export async function createAdminCode(
   return { ok: true, message: `Code set. You are signed in as ${actor}.` };
 }
 
-export async function signIn(_prev: ActionResult | null, form: FormData): Promise<ActionResult> {
+async function signInImpl(_prev: ActionResult | null, form: FormData): Promise<ActionResult> {
   const waiting = await lockoutRemaining();
   if (waiting > 0) return { ok: false, message: waitMessage(waiting) };
 
@@ -113,7 +116,7 @@ export async function signIn(_prev: ActionResult | null, form: FormData): Promis
 }
 
 /** Change the code from inside. Requires the current one, so a stolen session cannot lock you out. */
-export async function changeAdminCode(
+async function changeAdminCodeImpl(
   _prev: ActionResult | null,
   form: FormData,
 ): Promise<ActionResult> {
@@ -161,10 +164,10 @@ function refreshAll(): void {
 
 /* ------------------------------------------------------- admin mutations -- */
 
-export async function saveKcPrices(_prev: ActionResult | null, form: FormData): Promise<ActionResult> {
+async function saveKcPricesImpl(_prev: ActionResult | null, form: FormData): Promise<ActionResult> {
   const g = await guard();
   if ('ok' in g) return g;
-  let count = 0;
+  const entered: Array<[string, number]> = [];
   for (const [key, value] of form.entries()) {
     if (!key.startsWith('kc_')) continue;
     const raw = String(value).trim();
@@ -172,22 +175,27 @@ export async function saveKcPrices(_prev: ActionResult | null, form: FormData): 
     if (raw === '') continue;
     const cents = Number(raw.replace(/,/g, ''));
     if (!Number.isFinite(cents) || cents < 0) continue;
-    await setKcPrice(key.slice(3), cents, g.actor);
-    count += 1;
+    entered.push([key.slice(3), cents]);
   }
-  await logAudit(g.actor, 'kc_prices', null, 'bulk_update', { count });
+  const count = entered.length;
+  // One document write for the lot. A row at a time is a network round trip
+  // each against a store that lives over the wire.
+  await mutateState((state) => {
+    for (const [monthKey, cents] of entered) applyKcPrice(state, monthKey, cents, g.actor);
+    appendAudit(state, g.actor, 'kc_prices', null, 'bulk_update', { count });
+  });
   refreshAll();
   return { ok: true, message: `Updated ${count} contract month${count === 1 ? '' : 's'}.` };
 }
 
 /** The seasonal table: one differential per month of the calendar year. */
-export async function saveSeasonalPremiums(
+async function saveSeasonalPremiumsImpl(
   _prev: ActionResult | null,
   form: FormData,
 ): Promise<ActionResult> {
   const g = await guard();
   if ('ok' in g) return g;
-  let count = 0;
+  const entered: Array<[number, number]> = [];
   for (const [key, value] of form.entries()) {
     if (!key.startsWith('season_')) continue;
     const month = Number(key.slice(7));
@@ -197,16 +205,19 @@ export async function saveSeasonalPremiums(
     if (raw === '') continue;
     const cents = Number(raw.replace(/,/g, ''));
     if (!Number.isFinite(cents)) continue;
-    await setSeasonalPremium(month, cents, g.actor);
-    count += 1;
+    entered.push([month, cents]);
   }
-  await logAudit(g.actor, 'seasonal_premiums', null, 'bulk_update', { count });
+  const count = entered.length;
+  await mutateState((state) => {
+    for (const [month, cents] of entered) applySeasonalPremium(state, month, cents, g.actor);
+    appendAudit(state, g.actor, 'seasonal_premiums', null, 'bulk_update', { count });
+  });
   refreshAll();
   return { ok: true, message: `Updated ${count} month${count === 1 ? '' : 's'} of the season.` };
 }
 
 /** Dated exceptions: a month that departs from its season, plus why. */
-export async function savePremiumOverrides(
+async function savePremiumOverridesImpl(
   _prev: ActionResult | null,
   form: FormData,
 ): Promise<ActionResult> {
@@ -214,15 +225,15 @@ export async function savePremiumOverrides(
   if ('ok' in g) return g;
 
   const removed: string[] = [];
+  const kept: Array<[string, number, string]> = [];
   for (const monthKey of form.getAll('override_key').map(String)) {
     if (form.get(`override_drop_${monthKey}`)) {
-      await clearPremiumOverride(monthKey);
       removed.push(monthKey);
       continue;
     }
     const cents = num(form, `override_value_${monthKey}`);
     if (!Number.isFinite(cents)) continue;
-    await setPremiumOverride(monthKey, cents, str(form, `override_note_${monthKey}`), g.actor);
+    kept.push([monthKey, cents, str(form, `override_note_${monthKey}`)]);
   }
 
   const addMonth = str(form, 'override_new_month');
@@ -233,11 +244,17 @@ export async function savePremiumOverrides(
     if (!Number.isFinite(cents)) {
       return { ok: false, message: 'The new exception needs a number.' };
     }
-    await setPremiumOverride(addMonth, cents, str(form, 'override_new_note'), g.actor);
+    kept.push([addMonth, cents, str(form, 'override_new_note')]);
     added = addMonth;
   }
 
-  await logAudit(g.actor, 'premium_overrides', null, 'bulk_update', { removed, added });
+  await mutateState((state) => {
+    for (const monthKey of removed) applyClearPremiumOverride(state, monthKey);
+    for (const [monthKey, cents, note] of kept) {
+      applyPremiumOverride(state, monthKey, cents, note, g.actor);
+    }
+    appendAudit(state, g.actor, 'premium_overrides', null, 'bulk_update', { removed, added });
+  });
   refreshAll();
   const parts: string[] = [];
   if (added) parts.push(`Added ${added}.`);
@@ -245,7 +262,7 @@ export async function savePremiumOverrides(
   return { ok: true, message: parts.join(' ') || 'Exceptions saved.' };
 }
 
-export async function saveCostLines(_prev: ActionResult | null, form: FormData): Promise<ActionResult> {
+async function saveCostLinesImpl(_prev: ActionResult | null, form: FormData): Promise<ActionResult> {
   const g = await guard();
   if ('ok' in g) return g;
   const keys = form.getAll('cl_key').map(String);
@@ -259,13 +276,13 @@ export async function saveCostLines(_prev: ActionResult | null, form: FormData):
       line.isMargin = Boolean(form.get(`cl_margin_${key}`));
       line.active = Boolean(form.get(`cl_active_${key}`));
     }
+    appendAudit(state, g.actor, 'cost_lines', null, 'bulk_update', { keys });
   });
-  await logAudit(g.actor, 'cost_lines', null, 'bulk_update', { keys });
   refreshAll();
   return { ok: true, message: `Saved ${keys.length} cost lines.` };
 }
 
-export async function saveDestinations(_prev: ActionResult | null, form: FormData): Promise<ActionResult> {
+async function saveDestinationsImpl(_prev: ActionResult | null, form: FormData): Promise<ActionResult> {
   const g = await guard();
   if ('ok' in g) return g;
   const keys = form.getAll('d_key').map(String);
@@ -282,13 +299,13 @@ export async function saveDestinations(_prev: ActionResult | null, form: FormDat
       dest.storageCurrency = (str(form, `d_storcur_${key}`) || 'USD') as CurrencyCode;
       dest.active = Boolean(form.get(`d_active_${key}`));
     }
+    appendAudit(state, g.actor, 'destinations', null, 'bulk_update', { keys });
   });
-  await logAudit(g.actor, 'destinations', null, 'bulk_update', { keys });
   refreshAll();
   return { ok: true, message: `Saved ${keys.length} destinations.` };
 }
 
-export async function savePackagingAndProcess(
+async function savePackagingAndProcessImpl(
   _prev: ActionResult | null,
   form: FormData,
 ): Promise<ActionResult> {
@@ -313,8 +330,8 @@ export async function savePackagingAndProcess(
       proc.lbsPerUnit = num(form, `pr_lbs_${key}`);
       proc.active = Boolean(form.get(`pr_active_${key}`));
     }
+    appendAudit(state, g.actor, 'packaging_process', null, 'bulk_update', { packKeys, procKeys });
   });
-  await logAudit(g.actor, 'packaging_process', null, 'bulk_update', { packKeys, procKeys });
   refreshAll();
   return {
     ok: true,
@@ -322,7 +339,7 @@ export async function savePackagingAndProcess(
   };
 }
 
-export async function saveEngineSettings(
+async function saveEngineSettingsImpl(
   _prev: ActionResult | null,
   form: FormData,
 ): Promise<ActionResult> {
@@ -357,13 +374,13 @@ export async function saveEngineSettings(
       validDays,
       staleAfterDays,
     });
+    appendAudit(state, g.actor, 'settings', null, 'update', { minMargin, ladder, freeHoldMonths });
   });
-  await logAudit(g.actor, 'settings', null, 'update', { minMargin, ladder, freeHoldMonths });
   refreshAll();
   return { ok: true, message: 'Pricing settings saved.' };
 }
 
-export async function refreshRates(): Promise<ActionResult> {
+async function refreshRatesImpl(): Promise<ActionResult> {
   const g = await guard();
   if ('ok' in g) return g;
   const result = await refreshFxRates(g.actor);
@@ -375,13 +392,14 @@ export async function refreshRates(): Promise<ActionResult> {
   return { ok: result.errors.length === 0, message: parts.join(' ') || 'Nothing to update.' };
 }
 
-export async function saveFxOverrides(_prev: ActionResult | null, form: FormData): Promise<ActionResult> {
+async function saveFxOverridesImpl(_prev: ActionResult | null, form: FormData): Promise<ActionResult> {
   const g = await guard();
   if ('ok' in g) return g;
   const currencies = form.getAll('fx_key').map(String) as CurrencyCode[];
-  const current = new Map((await getFxRows()).map((row) => [row.currency, row]));
   const pinned: string[] = [];
   const released: string[] = [];
+  const toPin: Array<[CurrencyCode, number]> = [];
+  const toRelease: CurrencyCode[] = [];
 
   // The pin is the whole switch. Ticked, the typed rate is held against every
   // fetch; unticked, the row goes back to whatever the feed last said. An
@@ -392,23 +410,50 @@ export async function saveFxOverrides(_prev: ActionResult | null, form: FormData
     if (currency === 'USD') continue;
 
     if (!form.get(`fx_pin_${currency}`)) {
-      if (current.get(currency)?.isOverride) {
-        await clearFxOverride(currency, g.actor);
-        released.push(currency);
-      }
+      toRelease.push(currency);
       continue;
     }
 
     const typed = num(form, `fx_value_${currency}`);
     if (typed <= 0) return { ok: false, message: `${currency} rate must be greater than zero.` };
     // TRM is typed the way a trader says it — pesos per dollar — and stored inverted.
-    await overrideFxRate(currency, currency === 'COP' ? trmToUsdPerCop(typed) : typed, g.actor);
+    toPin.push([currency, currency === 'COP' ? trmToUsdPerCop(typed) : typed]);
     pinned.push(currency);
   }
 
+  await mutateState((state) => {
+    for (const currency of toRelease) {
+      // Only report the ones that were actually pinned to begin with.
+      if (!state.fx.find((r) => r.currency === currency)?.isOverride) continue;
+      applyClearFxOverride(state, currency);
+      released.push(currency);
+    }
+    for (const [currency, usdPerUnit] of toPin) {
+      applyFxOverride(state, currency, usdPerUnit, 'Manual override');
+    }
+    appendAudit(state, g.actor, 'fx_rates', null, 'bulk_override', { pinned, released });
+  });
   refreshAll();
   const parts: string[] = [];
   if (pinned.length) parts.push(`Pinned ${pinned.join(', ')}.`);
   if (released.length) parts.push(`Released ${released.join(', ')} back to the feed.`);
   return { ok: true, message: parts.join(' ') || 'No FX changes.' };
 }
+
+
+/* --------------------------------------------------- exported actions -- */
+
+// Every one is wrapped, so a store that will not answer shows up in the save
+// bar rather than as a blank page with a digest on it.
+export const saveKcPrices = guarded('saveKcPrices', saveKcPricesImpl);
+export const saveSeasonalPremiums = guarded('saveSeasonalPremiums', saveSeasonalPremiumsImpl);
+export const savePremiumOverrides = guarded('savePremiumOverrides', savePremiumOverridesImpl);
+export const saveCostLines = guarded('saveCostLines', saveCostLinesImpl);
+export const saveDestinations = guarded('saveDestinations', saveDestinationsImpl);
+export const savePackagingAndProcess = guarded('savePackagingAndProcess', savePackagingAndProcessImpl);
+export const saveEngineSettings = guarded('saveEngineSettings', saveEngineSettingsImpl);
+export const saveFxOverrides = guarded('saveFxOverrides', saveFxOverridesImpl);
+export const createAdminCode = guarded('createAdminCode', createAdminCodeImpl);
+export const signIn = guarded('signIn', signInImpl);
+export const changeAdminCode = guarded('changeAdminCode', changeAdminCodeImpl);
+export const refreshRates = guarded('refreshRates', refreshRatesImpl);

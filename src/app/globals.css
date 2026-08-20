@@ -1679,6 +1679,25 @@ tfoot.qc-total td { border-top: 2px solid var(--fc-navy); font-weight: var(--fc-
 .qc-sens-delta.is-down { color: #8f5715; }
 .qc-sens tbody tr:hover { background: var(--fc-cream); }
 
+/* ── When a page cannot be drawn ───────────────────────────────────── */
+.qc-fault {
+  max-width: 520px; margin: 8vh auto; padding: 26px 24px;
+  background: #fff; border: 1px solid var(--fc-ink-100);
+  border-left: 5px solid var(--fc-danger); border-radius: var(--fc-radius-4);
+}
+.qc-fault-title {
+  margin: 0 0 10px; font-family: var(--fc-font-display); font-weight: var(--fc-fw-bold);
+  font-size: 17px; color: var(--fc-navy);
+}
+.qc-fault-body { margin: 0; font-size: 13px; line-height: 1.6; color: var(--fc-ink-500); }
+.qc-fault-actions { display: flex; gap: 9px; flex-wrap: wrap; margin-top: 16px; }
+.qc-fault-actions .fc-btn { min-height: 40px; }
+.qc-fault-digest {
+  margin: 18px 0 0; padding-top: 14px; border-top: 1px solid var(--fc-ink-100);
+  font-size: 11px; color: var(--fc-ink-300);
+}
+.qc-fault-digest code { font-family: var(--fc-font-mono); color: var(--fc-ink-500); }
+
 /* ── Loading ───────────────────────────────────────────────────────── */
 .fc-skel { padding: 0; }
 .fc-skel-sr {
