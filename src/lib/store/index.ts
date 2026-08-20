@@ -20,7 +20,13 @@ import {
   SEED_SETTINGS,
 } from '../pricing/reference';
 import { upcomingContractMonths } from '../kc';
-import type { CurrencyCode, EngineSettings, ReferenceData } from '../pricing/types';
+import type {
+  CurrencyCode,
+  Destination,
+  EngineSettings,
+  ProcessType,
+  ReferenceData,
+} from '../pricing/types';
 
 export type {
   FxRow,
@@ -113,10 +119,12 @@ async function readState(): Promise<AppState> {
  * rates along with the shape change. Every migration here has to carry the
  * configuration across, or say plainly that it cannot.
  */
-export function migrate(stored: AppState): AppState | null {
-  if (stored.version === STATE_VERSION) return stored;
+/**
+ * One step of the ladder. Each takes the shape it knows and returns the next.
+ */
+const MIGRATIONS: Record<number, (stored: AppState) => AppState> = {
+  1: (stored) => {
 
-  if (stored.version === 1) {
     const stamp = new Date().toISOString();
     // Version 1 kept premiums against KC contract months, which is the wrong
     // axis for a harvest differential — it left a shipment month like August
@@ -135,9 +143,60 @@ export function migrate(stored: AppState): AppState | null {
       })),
       premiumOverrides: [],
     };
+  },
+  2: (stored) => {
+
+    const processes = [...(stored.processes as ProcessType[])];
+
+    // Every existing type keeps its milling cost and gains a premium of zero,
+    // which is what it has been charging all along.
+    for (const row of processes) row.premiumCents ??= 0;
+
+    // The seed used to call this one "Washed". Renamed only if nobody has
+    // touched it, so a desk that renamed it keeps their own word.
+    const washed = processes.find((p) => p.key === 'washed');
+    if (washed && washed.label === 'Washed') washed.label = 'Fully washed';
+
+    // The types the desk asked for, added if they are not already there.
+    for (const seeded of SEED_PROCESSES) {
+      if (!processes.some((p) => p.key === seeded.key)) processes.push({ ...seeded });
+    }
+
+    // Canada invoices in US dollars a pound. Corrected only where it is still
+    // on the figure the seed shipped, so a deliberate change survives.
+    const destinations = (stored.destinations as Destination[]).map((d) =>
+      d.key === 'canada' && d.quoteCurrency === 'CAD' && d.quoteUnit === 'kg'
+        ? { ...d, quoteCurrency: 'USD' as const, quoteUnit: 'lb' as const }
+        : d,
+    );
+
+    return { ...stored, version: 3, processes, destinations };
+  },
+};
+
+/**
+ * Bring a stored document up to the current shape, or give up on it.
+ *
+ * Applied in sequence, so a document several versions behind arrives current
+ * in one pass rather than creeping forward a version per load. Re-seeding on a
+ * version bump would throw away the desk's costed lines and rates along with
+ * the shape change; every step here carries the configuration across, or says
+ * plainly that it cannot.
+ */
+export function migrate(stored: AppState): AppState | null {
+  let state = stored;
+  const seen = new Set<number>();
+
+  while (state.version !== STATE_VERSION) {
+    // A step that fails to move the version would spin here forever.
+    if (seen.has(state.version)) return null;
+    seen.add(state.version);
+    const step = MIGRATIONS[state.version];
+    if (!step) return null;
+    state = step(state);
   }
 
-  return null;
+  return state;
 }
 
 /** Read, change, write. The document is small enough to rewrite whole. */

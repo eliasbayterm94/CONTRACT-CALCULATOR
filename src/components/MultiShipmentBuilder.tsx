@@ -149,7 +149,7 @@ export default function MultiShipmentBuilder({
       terms: [
         ['Destination', destination.label],
         ['Incoterm', incoterm],
-        ['Process', reference.processes.find((p) => p.key === processKey)?.label ?? ''],
+        ['Coffee type', reference.processes.find((p) => p.key === processKey)?.label ?? ''],
         ['Packaging', reference.packaging.find((p) => p.key === packagingKey)?.label ?? ''],
         ['Quantity', `${plain(contract.totalBags, 0)} bags · ${plain(contract.totalLbs, 0)} lb`],
         ['Shipment window', `${monthLabel(fromMonth)} – ${monthLabel(safeTo)}`],
@@ -267,7 +267,7 @@ export default function MultiShipmentBuilder({
               </select>
             </div>
             <div className="qc-field">
-              <label className="qc-label" htmlFor="m-process">Process</label>
+              <label className="qc-label" htmlFor="m-process">Coffee type</label>
               <select id="m-process" className="qc-select" value={processKey} onChange={(e) => setProcessKey(e.target.value)}>
                 {reference.processes.map((p) => <option key={p.key} value={p.key}>{p.label}</option>)}
               </select>

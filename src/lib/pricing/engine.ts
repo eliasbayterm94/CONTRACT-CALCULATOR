@@ -358,7 +358,11 @@ export function calculateQuote(input: QuoteInput, ref: ReferenceData): QuoteResu
   }
 
   // ---- green coffee + finance --------------------------------------------
-  const greenCoffeeUsdPerLb = input.kcUsdPerLb + input.premiumUsdPerLb;
+  // Decaf and organic are dearer coffee, not dearer milling, so the type
+  // premium sits with the quality premium rather than among the cost lines —
+  // and finance, charged on cargo value, rides on it as it should.
+  const typePremiumUsdPerLb = (process.premiumCents ?? 0) / 100;
+  const greenCoffeeUsdPerLb = input.kcUsdPerLb + input.premiumUsdPerLb + typePremiumUsdPerLb;
   if (input.kcUsdPerLb <= 0) warnings.push({ text: 'No KC price entered.', adminOnly: false });
   if (input.premiumUsdPerLb === 0) {
     warnings.push({ text: 'No quality premium set for this quote.', adminOnly: true });
@@ -434,6 +438,8 @@ export function calculateQuote(input: QuoteInput, ref: ReferenceData): QuoteResu
     lines,
     differentialUsdPerLb,
     greenCoffeeUsdPerLb,
+    typePremiumUsdPerLb,
+    typeLabel: process.label,
     financeUsdPerLb,
     storageUsdPerLb,
     totalCostUsdPerLb,

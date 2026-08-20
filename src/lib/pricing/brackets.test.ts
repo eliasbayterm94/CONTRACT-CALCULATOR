@@ -157,3 +157,49 @@ describe('telling the client to round up', () => {
     expect(advice.displayPrice).toBe(at241.floor.displayPrice);
   });
 });
+
+describe('what the coffee type adds', () => {
+  const priceOf = (processKey: string) =>
+    calculateQuote({ ...input(250), processKey }, ref);
+
+  it('charges nothing for a plain washed lot', () => {
+    expect(priceOf('washed').typePremiumUsdPerLb).toBe(0);
+  });
+
+  it('charges the desk’s figure for the types that carry one', () => {
+    expect(priceOf('decaf').typePremiumUsdPerLb).toBeCloseTo(0.30, 10);
+    expect(priceOf('organic').typePremiumUsdPerLb).toBeCloseTo(0.35, 10);
+    expect(priceOf('supremo').typePremiumUsdPerLb).toBeCloseTo(0.25, 10);
+  });
+
+  it('counts it as coffee, not as milling', () => {
+    const washed = priceOf('washed');
+    const organic = priceOf('organic');
+    // It joins the green coffee, where the monthly differential already sits.
+    expect(organic.greenCoffeeUsdPerLb - washed.greenCoffeeUsdPerLb).toBeCloseTo(0.35, 10);
+    // Milling is unchanged: these types are seeded at the same processing cost.
+    const milling = (r: typeof washed) => r.lines.find((l) => l.key === 'milling')!.usdPerLb;
+    expect(milling(organic)).toBeCloseTo(milling(washed), 10);
+  });
+
+  it('carries through to the cost and the price', () => {
+    const washed = priceOf('washed');
+    const decaf = priceOf('decaf');
+    expect(decaf.totalCostUsdPerLb).toBeGreaterThan(washed.totalCostUsdPerLb);
+    expect(decaf.floor.priceUsdPerLb).toBeGreaterThan(washed.floor.priceUsdPerLb);
+    // Thirty cents of coffee costs more than thirty cents to sell, because the
+    // margin is charged on it too.
+    expect(decaf.floor.priceUsdPerLb - washed.floor.priceUsdPerLb).toBeGreaterThan(0.3);
+  });
+
+  it('is financed like the rest of the cargo on a DDP hold', () => {
+    const held = (processKey: string) =>
+      calculateQuote({ ...input(250), processKey, incoterm: 'DDP', holdMonths: 6 }, ref);
+    expect(held('organic').financeUsdPerLb).toBeGreaterThan(held('washed').financeUsdPerLb);
+  });
+
+  it('names the type it priced, for the breakdown to show', () => {
+    expect(priceOf('organic').typeLabel).toBe('Organic');
+    expect(priceOf('washed').typeLabel).toBe('Fully washed');
+  });
+});

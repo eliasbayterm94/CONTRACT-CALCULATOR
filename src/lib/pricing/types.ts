@@ -78,12 +78,22 @@ export interface PackagingType {
   active: boolean;
 }
 
+/**
+ * A coffee type: what it costs to mill, and what the type itself is worth.
+ *
+ * The milling amount is a processing cost in pesos a bag. The premium is a
+ * quality differential in US cents a pound, the same kind of figure as the
+ * monthly one — decaf and organic are dearer coffee, not dearer milling.
+ */
 export interface ProcessType {
   key: string;
   label: string;
+  /** Milling, in `currency` per `lbsPerUnit` pounds. */
   amount: number;
   lbsPerUnit: number;
   currency: CurrencyCode;
+  /** What this type adds over a plain washed coffee, US cents per pound. */
+  premiumCents: number;
   active: boolean;
 }
 
@@ -322,8 +332,11 @@ export interface QuoteResult {
   lines: CostLineResult[];
   /** Every included cost line except finance, USD/lb. */
   differentialUsdPerLb: number;
-  /** KC + quality premium, USD/lb. */
+  /** KC + quality premium + coffee type premium, USD/lb. */
   greenCoffeeUsdPerLb: number;
+  /** What the coffee type adds over a plain washed lot, USD/lb. */
+  typePremiumUsdPerLb: number;
+  typeLabel: string;
   financeUsdPerLb: number;
   storageUsdPerLb: number;
   /** Green coffee + differential + finance. The break-even. */

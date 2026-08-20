@@ -100,7 +100,7 @@ export interface AppState {
   audit: AuditEntry[];
 }
 
-export const STATE_VERSION = 2;
+export const STATE_VERSION = 3;
 
 /** The audit trail is a rolling window, not an archive. */
 export const AUDIT_LIMIT = 200;

@@ -295,31 +295,23 @@ export const SEED_PACKAGING: PackagingType[] = [
   },
 ];
 
+/** Milling in pesos a bag, and what the type is worth in US cents a pound. */
+function coffee(
+  key: string,
+  label: string,
+  amount: number,
+  premiumCents: number,
+): ProcessType {
+  return { key, label, amount, lbsPerUnit: 154.322, currency: 'COP', premiumCents, active: true };
+}
+
 export const SEED_PROCESSES: ProcessType[] = [
-  {
-    key: 'washed',
-    label: 'Washed',
-    amount: 50000,
-    lbsPerUnit: 154.322,
-    currency: 'COP',
-    active: true,
-  },
-  {
-    key: 'honey',
-    label: 'Honey',
-    amount: 70000,
-    lbsPerUnit: 154.322,
-    currency: 'COP',
-    active: true,
-  },
-  {
-    key: 'natural',
-    label: 'Natural',
-    amount: 90000,
-    lbsPerUnit: 154.322,
-    currency: 'COP',
-    active: true,
-  },
+  coffee('washed', 'Fully washed', 50_000, 0),
+  coffee('decaf', 'Decaf', 50_000, 30),
+  coffee('organic', 'Organic', 50_000, 35),
+  coffee('supremo', 'Supremo', 50_000, 25),
+  coffee('honey', 'Honey', 70_000, 0),
+  coffee('natural', 'Natural', 90_000, 0),
 ];
 
 function dest(
@@ -359,7 +351,8 @@ export const SEED_DESTINATIONS: Destination[] = [
   dest('ny', 'New York', 'USD', 'lb', 2500, 2600, 1.05, 'USD'),
   dest('dupuy', 'Dupuy', 'USD', 'lb', 2500, 2100, 1.05, 'USD'),
   dest('annex', 'Annex', 'USD', 'lb', 2500, 2600, 1.05, 'USD'),
-  dest('canada', 'Canada', 'CAD', 'kg', 2500, 2500, 1.05, 'USD'),
+  /* Canada buys in US dollars a pound, like the other North American desks. */
+  dest('canada', 'Canada', 'USD', 'lb', 2500, 2500, 1.05, 'USD'),
   dest('australia', 'Australia', 'AUD', 'kg', 4000, 2100, 2.5, 'AUD'),
   dest('rotterdam', 'Rotterdam', 'EUR', 'kg', 2500, 1800, 1.4, 'EUR'),
   dest('uk', 'United Kingdom', 'GBP', 'kg', 2500, 1800, 1.4, 'EUR'),

@@ -3,6 +3,7 @@ import DestinationsEditor from '@/components/admin/DestinationsEditor';
 import PackagingProcessEditor from '@/components/admin/PackagingProcessEditor';
 import PolicyEditor from '@/components/admin/PolicyEditor';
 import { FxEditor, MonthTableEditor } from '@/components/admin/MarketEditor';
+import CoffeeTypeEditor from '@/components/admin/CoffeeTypeEditor';
 import { OverrideEditor, SeasonEditor } from '@/components/admin/PremiumEditor';
 import CardLabels from '@/components/admin/CardLabels';
 import { ChangeCodeForm, CreateCodeForm, SignInForm, SignOutButton } from '@/components/admin/SignInForm';
@@ -32,12 +33,13 @@ export const dynamic = 'force-dynamic';
 
 const SECTIONS = [
   ['market', 'KC & premiums'],
+  ['coffee-types', 'Coffee types'],
   ['premium-exceptions', 'Premium exceptions'],
   ['fx', 'Exchange rates'],
   ['policy', 'Pricing policy'],
   ['costs', 'Cost lines'],
   ['destinations', 'Destinations'],
-  ['packaging', 'Packaging & process'],
+  ['packaging', 'Packaging'],
   ['audit', 'Recent changes'],
 ] as const;
 
@@ -150,6 +152,10 @@ export default async function AdminPage() {
             </section>
           </div>
 
+          <section className="qc-panel" id="coffee-types">
+            <CoffeeTypeEditor rows={allProcesses} locked={locked} />
+          </section>
+
           <section className="qc-panel" id="premium-exceptions">
             <OverrideEditor rows={overrides} months={monthOptions(new Date(), 24)} locked={locked} />
           </section>
@@ -191,11 +197,10 @@ export default async function AdminPage() {
 
           <section className="qc-panel" id="packaging">
             <div className="qc-panel-head">
-              <h2 className="qc-panel-title">Packaging &amp; process</h2>
+              <h2 className="qc-panel-title">Packaging</h2>
             </div>
             <PackagingProcessEditor
               packaging={allPackaging}
-              processes={allProcesses}
               fx={reference.fx}
               locked={locked}
             />

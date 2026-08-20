@@ -5,7 +5,7 @@ import NumberInput from '../NumberInput';
 import SaveBar from './SaveBar';
 import { dirtyClass, useTracked } from './useTracked';
 import { savePackagingAndProcess, type ActionResult } from '@/app/actions';
-import type { FxTable, PackagingType, ProcessType } from '@/lib/pricing/types';
+import type { FxTable, PackagingType } from '@/lib/pricing/types';
 import { cents } from '@/lib/format';
 
 /**
@@ -14,18 +14,15 @@ import { cents } from '@/lib/format';
  */
 export default function PackagingProcessEditor({
   packaging,
-  processes,
   fx,
   locked,
 }: {
   packaging: PackagingType[];
-  processes: ProcessType[];
   fx: FxTable;
   locked: boolean;
 }) {
   const [state, formAction] = useActionState(savePackagingAndProcess, null as ActionResult | null);
   const pack = useTracked<PackagingType>(packaging);
-  const proc = useTracked<ProcessType>(processes);
   const [traderPackaging, setTraderPackaging] = useState(
     packaging.find((p) => p.traderDefault)?.key ?? packaging[0]?.key ?? '',
   );
@@ -112,74 +109,12 @@ export default function PackagingProcessEditor({
         </table>
       </div>
 
-      <div className="qc-table-wrap" style={{ borderTop: '1px solid var(--fc-ink-100)' }}>
-        <table className="qc-table qc-cards">
-          <thead>
-            <tr>
-              <th>Milling / process</th>
-              <th className="qc-num">Cost per unit</th>
-              <th className="qc-num">Pounds per unit</th>
-              <th className="qc-num">Works out to</th>
-              <th>Active</th>
-              <th />
-            </tr>
-          </thead>
-          <tbody>
-            {proc.rows.map((p) => (
-              <tr key={p.key}>
-                <td>
-                  <input type="hidden" name="pr_key" value={p.key} />
-                  <strong>{p.label}</strong>
-                </td>
-                <td className="qc-num">
-                  <NumberInput
-                    name={`pr_amount_${p.key}`}
-                    className={dirtyClass('qc-input num', proc.isDirty(p.key, 'amount'))}
-                    step="any" inputMode="decimal" value={p.amount} disabled={locked}
-                    aria-label={`${p.label} amount`}
-                    onValueChange={(v) => proc.update(p.key, 'amount', v)}
-                  />
-                </td>
-                <td className="qc-num">
-                  <NumberInput
-                    name={`pr_lbs_${p.key}`}
-                    className={dirtyClass('qc-input num', proc.isDirty(p.key, 'lbsPerUnit'))}
-                    step="any" inputMode="decimal" value={p.lbsPerUnit} disabled={locked}
-                    aria-label={`${p.label} pounds`}
-                    onValueChange={(v) => proc.update(p.key, 'lbsPerUnit', v)}
-                  />
-                </td>
-                <td className="qc-num qc-derived">
-                  <strong>{cents(perLb(p.amount, p.lbsPerUnit, p.currency))}</strong>/lb
-                </td>
-                <td>
-                  <label className="qc-check"><input
-                    type="checkbox" name={`pr_active_${p.key}`}
-                    checked={p.active} disabled={locked}
-                    aria-label={`${p.label} active`}
-                    onChange={(e) => proc.update(p.key, 'active', e.target.checked)}
-                  /></label>
-                </td>
-                <td>
-                  <button
-                    type="button" className="qc-rowreset"
-                    disabled={locked || !proc.dirtyKeys.has(p.key)}
-                    onClick={() => proc.resetRow(p.key)}
-                  >
-                    Undo
-                  </button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
 
       <SaveBar
-        dirtyCount={pack.dirtyKeys.size + proc.dirtyKeys.size + (traderChanged ? 1 : 0)}
-        onReset={() => { pack.resetAll(); proc.resetAll(); setTraderPackaging(packaging.find((p) => p.traderDefault)?.key ?? ''); }}
+        dirtyCount={pack.dirtyKeys.size + (traderChanged ? 1 : 0)}
+        onReset={() => { pack.resetAll(); setTraderPackaging(packaging.find((p) => p.traderDefault)?.key ?? ''); }}
         state={state}
-        label="Save packaging and processes"
+        label="Save packaging"
         locked={locked}
       />
     </form>

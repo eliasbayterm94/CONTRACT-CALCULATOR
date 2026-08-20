@@ -204,7 +204,7 @@ export default function QuoteBuilder({
       terms: [
         ['Destination', destination.label],
         ['Incoterm', incoterm],
-        ['Process', reference.processes.find((p) => p.key === input.processKey)?.label ?? ''],
+        ['Coffee type', reference.processes.find((p) => p.key === input.processKey)?.label ?? ''],
         ['Packaging', reference.packaging.find((p) => p.key === input.packagingKey)?.label ?? ''],
         ['Quantity', `${plain(result.bags, 0)} bags · ${plain(result.totalLbs, 0)} lb`],
         ['Shipment window', `${monthLabel(fromMonth)} – ${monthLabel(safeTo)}`],
@@ -455,13 +455,16 @@ export default function QuoteBuilder({
                   </div>
                 </div>
                 <div className="qc-field">
-                  <label className="qc-label" htmlFor="process">Process</label>
+                  <label className="qc-label" htmlFor="process">Coffee type</label>
                   <select
                     id="process" className="qc-select" value={processKey}
                     onChange={(e) => setProcessKey(e.target.value)}
                   >
                     {reference.processes.map((p) => (
-                      <option key={p.key} value={p.key}>{p.label}</option>
+                      <option key={p.key} value={p.key}>
+                        {/* What the type adds is part of choosing it. */}
+                        {p.premiumCents ? `${p.label} · +${plain(p.premiumCents, 0)}¢` : p.label}
+                      </option>
                     ))}
                   </select>
                 </div>
@@ -1136,6 +1139,30 @@ export default function QuoteBuilder({
                               KC &amp; premiums &divide; 100 = {plain(input.premiumUsdPerLb, 6)} USD/lb
                             </td>
                           </tr>
+                        )}
+                        {result.typePremiumUsdPerLb !== 0 && (
+                          <>
+                            <tr>
+                              <td>{result.typeLabel}</td><td>Coffee type</td>
+                              <td className="qc-num">{cents(result.typePremiumUsdPerLb)}</td>
+                              <td className="qc-num">—</td>
+                              <td className="qc-num">{plain(result.typePremiumUsdPerLb, 4)}</td>
+                              <td className="qc-num">{cents(result.typePremiumUsdPerLb)}</td>
+                              <td className="qc-num">
+                                {percent(result.typePremiumUsdPerLb / result.totalCostUsdPerLb, 1)}
+                              </td>
+                            </tr>
+                            {showWorking && (
+                              <tr className="qc-trace-row">
+                                <td colSpan={7}>
+                                  <span className="qc-trace-source">Coffee types</span>
+                                  {plain(result.typePremiumUsdPerLb * 100, 2)}&cent;/lb for{' '}
+                                  {result.typeLabel} &divide; 100 ={' '}
+                                  {plain(result.typePremiumUsdPerLb, 6)} USD/lb
+                                </td>
+                              </tr>
+                            )}
+                          </>
                         )}
                         {result.lines.map((line, i) => {
                           const prev = result.lines[i - 1];

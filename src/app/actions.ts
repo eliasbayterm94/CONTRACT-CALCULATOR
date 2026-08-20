@@ -340,7 +340,6 @@ async function savePackagingAndProcessImpl(
   const g = await guard();
   if ('ok' in g) return g;
   const packKeys = form.getAll('p_key').map(String);
-  const procKeys = form.getAll('pr_key').map(String);
   const traderDefault = str(form, 'trader_packaging');
   await mutateState((state) => {
     for (const key of packKeys) {
@@ -351,19 +350,12 @@ async function savePackagingAndProcessImpl(
       pack.traderDefault = key === traderDefault;
       pack.active = Boolean(form.get(`p_active_${key}`));
     }
-    for (const key of procKeys) {
-      const proc = state.processes.find((p) => p.key === key);
-      if (!proc) continue;
-      proc.amount = num(form, `pr_amount_${key}`);
-      proc.lbsPerUnit = num(form, `pr_lbs_${key}`);
-      proc.active = Boolean(form.get(`pr_active_${key}`));
-    }
-    appendAudit(state, g.actor, 'packaging_process', null, 'bulk_update', { packKeys, procKeys });
+    appendAudit(state, g.actor, 'packaging', null, 'bulk_update', { packKeys });
   });
   refreshAll();
   return {
     ok: true,
-    message: `Saved ${packKeys.length} packaging types and ${procKeys.length} processes.`,
+    message: `Saved ${packKeys.length} packaging types.`,
   };
 }
 
@@ -491,6 +483,70 @@ async function saveFxOverridesImpl(_prev: ActionResult | null, form: FormData): 
 }
 
 
+/**
+ * The coffee types a quote can be built on, and what each is worth.
+ *
+ * A type carries two figures that are not the same kind of thing: milling,
+ * which is a processing cost in pesos a bag, and the premium the type itself
+ * commands, in US cents a pound over a plain washed lot.
+ */
+async function saveCoffeeTypesImpl(
+  _prev: ActionResult | null,
+  form: FormData,
+): Promise<ActionResult> {
+  const g = await guard();
+  if ('ok' in g) return g;
+
+  const keys = form.getAll('ct_key').map(String);
+  const newLabel = str(form, 'ct_new_label');
+  const newKey = newLabel
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_|_$/g, '');
+
+  if (newLabel && !newKey) {
+    return { ok: false, message: 'That name has no letters or numbers in it.' };
+  }
+
+  let added = '';
+  const result = await mutateState((state) => {
+    for (const key of keys) {
+      const row = state.processes.find((p) => p.key === key);
+      if (!row) continue;
+      row.label = str(form, `ct_label_${key}`) || row.label;
+      row.amount = num(form, `ct_amount_${key}`);
+      row.premiumCents = num(form, `ct_premium_${key}`);
+      row.active = Boolean(form.get(`ct_active_${key}`));
+    }
+
+    if (newKey) {
+      if (state.processes.some((p) => p.key === newKey)) {
+        return `"${newLabel}" is already on the list.`;
+      }
+      state.processes.push({
+        key: newKey,
+        label: newLabel,
+        amount: num(form, 'ct_new_amount'),
+        lbsPerUnit: state.processes[0]?.lbsPerUnit ?? 154.322,
+        currency: state.processes[0]?.currency ?? 'COP',
+        premiumCents: num(form, 'ct_new_premium'),
+        active: true,
+      });
+      added = newLabel;
+    }
+
+    appendAudit(state, g.actor, 'coffee_types', null, 'bulk_update', { keys, added });
+    return null;
+  });
+
+  if (result) return { ok: false, message: result };
+  refreshAll();
+  return {
+    ok: true,
+    message: added ? `Saved, and added ${added}.` : `Saved ${keys.length} coffee types.`,
+  };
+}
+
 /* --------------------------------------------------- exported actions -- */
 
 // Every one is wrapped, so a store that will not answer shows up in the save
@@ -507,3 +563,4 @@ export const createAdminCode = guarded('createAdminCode', createAdminCodeImpl);
 export const signIn = guarded('signIn', signInImpl);
 export const changeAdminCode = guarded('changeAdminCode', changeAdminCodeImpl);
 export const refreshRates = guarded('refreshRates', refreshRatesImpl);
+export const saveCoffeeTypes = guarded('saveCoffeeTypes', saveCoffeeTypesImpl);
