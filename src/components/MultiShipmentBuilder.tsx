@@ -91,6 +91,17 @@ export default function MultiShipmentBuilder({
 
   const destination = reference.destinations.find((d) => d.key === destinationKey);
   const unitLabel = destination ? `${destination.quoteCurrency}/${UNIT_LABEL[destination.quoteUnit]}` : '';
+  /**
+   * Does the client see a different figure from the one the desk works in?
+   *
+   * The breakdown reasons in US cents per pound, because that is the unit the
+   * C trades in and every cost is built up in. A client invoiced in Australian
+   * dollars per kilo never sees that number, so their own is carried alongside
+   * rather than left to be worked out from the contract value.
+   */
+  const clientUnitDiffers = Boolean(
+    destination && (destination.quoteCurrency !== 'USD' || destination.quoteUnit !== 'lb'),
+  );
   const settings = reference.settings;
 
   const update = useCallback(
@@ -508,6 +519,9 @@ export default function MultiShipmentBuilder({
           <section className="qc-panel">
             <div className="qc-panel-head">
               <h2 className="qc-panel-title">Per-shipment breakdown <span className="qc-adminchip">Admin only</span></h2>
+              <span className="qc-panel-note">
+                US cents per pound, except where the client&apos;s own currency is named
+              </span>
             </div>
             <div className="qc-table-wrap">
               <table className="qc-table">
@@ -515,7 +529,10 @@ export default function MultiShipmentBuilder({
                   <tr>
                     <th>Shipment</th><th className="qc-num">KC</th><th className="qc-num">Premium</th>
                     <th className="qc-num">Differential</th><th className="qc-num">Cost</th>
-                    <th className="qc-num">Price</th><th className="qc-num">Margin/lb</th><th className="qc-num">Value</th>
+                    <th className="qc-num">Price</th>
+                    {clientUnitDiffers && <th className="qc-num">Price {unitLabel}</th>}
+                    <th className="qc-num">Margin/lb</th>
+                    <th className="qc-num">Value {destination.quoteCurrency}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -527,8 +544,15 @@ export default function MultiShipmentBuilder({
                       <td className="qc-num">{cents(s.result.differentialUsdPerLb + s.result.financeUsdPerLb)}</td>
                       <td className="qc-num">{cents(s.result.totalCostUsdPerLb)}</td>
                       <td className="qc-num">{cents(s.priceUsdPerLb)}</td>
+                      {clientUnitDiffers && (
+                        <td className="qc-num qc-client-cur">
+                          {money(s.displayPrice, destination.quoteCurrency, PRICE_DP)}
+                        </td>
+                      )}
                       <td className="qc-num">{cents(s.priceUsdPerLb - s.result.totalCostUsdPerLb)}</td>
-                      <td className="qc-num">{money(inQuote(s.valueUsd), destination.quoteCurrency, 0)}</td>
+                      <td className="qc-num qc-client-cur">
+                        {money(inQuote(s.valueUsd), destination.quoteCurrency, 0)}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -540,8 +564,15 @@ export default function MultiShipmentBuilder({
                     <td className="qc-num">—</td>
                     <td className="qc-num">{cents(contract.weightedCostUsdPerLb)}</td>
                     <td className="qc-num">{cents(contract.consolidatedUsdPerLb)}</td>
+                    {clientUnitDiffers && (
+                      <td className="qc-num qc-client-cur">
+                        {money(contract.consolidatedDisplay, destination.quoteCurrency, PRICE_DP)}
+                      </td>
+                    )}
                     <td className="qc-num">{cents(contract.consolidatedUsdPerLb - contract.weightedCostUsdPerLb)}</td>
-                    <td className="qc-num">{money(inQuote(contract.totalValueUsd), destination.quoteCurrency, 0)}</td>
+                    <td className="qc-num qc-client-cur">
+                      {money(inQuote(contract.totalValueUsd), destination.quoteCurrency, 0)}
+                    </td>
                   </tr>
                 </tfoot>
               </table>

@@ -1383,6 +1383,9 @@ table.qc-table tbody tr:hover { background: var(--fc-cream); }
 .qc-num { font-family: var(--fc-font-mono); font-feature-settings: "tnum"; letter-spacing: var(--fc-ls-tight); text-align: right; }
 th.qc-num { text-align: right; }
 
+/* The figures the client actually sees, set apart from the desk's own unit. */
+.qc-client-cur { color: var(--fc-navy); font-weight: var(--fc-fw-bold); }
+
 .qc-row-floor { background: rgba(231,226,68,.13) !important; }
 .qc-row-floor:hover { background: rgba(231,226,68,.2) !important; }
 .qc-row-floor td:first-child { box-shadow: inset 3px 0 0 var(--fc-yellow-600); }
