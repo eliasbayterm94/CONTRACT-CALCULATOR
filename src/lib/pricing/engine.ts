@@ -14,10 +14,13 @@ import type {
   QuoteWarning,
   Reconciliation,
   ReferenceData,
+  RoundUpAdvice,
   SensitivityRow,
   Shipment,
   ShipmentResult,
   StaleFigure,
+  VolumeBand,
+  VolumeBracket,
 } from './types';
 import {
   DEFAULT_LBS_PER_CONTAINER,
@@ -65,6 +68,70 @@ export function marginAtPrice(
   const grossed = price - cost + base;
   if (grossed <= 0) return Number.NEGATIVE_INFINITY;
   return 1 - base / grossed;
+}
+
+/**
+ * The floor an order of this size is held to.
+ *
+ * Below the smallest bracket the order is outside policy: it still prices, so
+ * the desk can see what it would take, but it is not a quote a trader may send
+ * on their own.
+ */
+export function volumeBand(bags: number, settings: EngineSettings): VolumeBand {
+  const brackets = [...(settings.volumeBrackets ?? [])].sort((a, b) => a.fromBags - b.fromBags);
+  if (brackets.length === 0) {
+    return { bracket: null, minMargin: settings.minMargin, belowPolicy: false, label: 'Any size' };
+  }
+
+  const smallest = brackets[0];
+  if (bags < smallest.fromBags) {
+    return {
+      bracket: null,
+      // Priced at the smallest bracket's floor, so the figure on screen is the
+      // one the desk would have to beat to take the order at all.
+      minMargin: smallest.minMargin,
+      belowPolicy: true,
+      label: `Under ${smallest.fromBags} bags`,
+    };
+  }
+
+  const hit =
+    brackets.find((b) => bags >= b.fromBags && (b.toBags === null || bags <= b.toBags)) ??
+    brackets[brackets.length - 1];
+  return {
+    bracket: hit,
+    minMargin: hit.minMargin,
+    belowPolicy: false,
+    label: hit.toBags === null ? `${hit.fromBags}+ bags` : `${hit.fromBags}–${hit.toBags} bags`,
+  };
+}
+
+/**
+ * Order sizes at the top of a bracket where asking for more costs less.
+ *
+ * Price is cost / (1 - m), so the ratio between two brackets' prices depends
+ * only on their margins — the cost cancels. The run is therefore a property of
+ * the bracket table alone, the same at every destination and every KC, and can
+ * be shown to whoever is editing the margins before they save them.
+ */
+export function deadZones(
+  brackets: VolumeBracket[],
+): Array<{ from: number; to: number; nextBags: number }> {
+  const sorted = [...brackets].sort((a, b) => a.fromBags - b.fromBags);
+  const out: Array<{ from: number; to: number; nextBags: number }> = [];
+
+  for (let i = 0; i < sorted.length - 1; i += 1) {
+    const here = sorted[i];
+    const next = sorted[i + 1];
+    if (here.toBags === null) continue;
+    // The size at which the two totals meet. Above it, the next bracket is
+    // cheaper outright.
+    const meets = (next.fromBags * (1 - here.minMargin)) / (1 - next.minMargin);
+    const from = Math.floor(meets) + 1;
+    if (from <= here.toBags) out.push({ from, to: here.toBags, nextBags: next.fromBags });
+  }
+
+  return out;
 }
 
 /** Months of storage and finance actually billed, after the free window. */
@@ -159,10 +226,14 @@ export function calculateQuote(input: QuoteInput, ref: ReferenceData): QuoteResu
 
   if (input.bags > 0 && Math.abs(containers - Math.round(containers)) > 0.005) {
     warnings.push({
+      // Freight, port and inland transport are charged against a full
+      // container and shared pro rata, which is right while a part load
+      // travels consolidated with other orders. On a dedicated container it
+      // would understate them, and the desk is the one who knows which it is.
       text:
-        `${input.bags} bags is ${containers.toFixed(2)} containers. Freight, port and inland ` +
-        `transport assume full loads, so a part load understates them.`,
-      adminOnly: false,
+        `${input.bags} bags is ${containers.toFixed(2)} containers. Freight and port are shared ` +
+        `pro rata, which holds while this ships consolidated — on a container of its own it does not.`,
+      adminOnly: true,
     });
   }
   if (!destination.allowedIncoterms.includes(input.incoterm)) {
@@ -342,9 +413,21 @@ export function calculateQuote(input: QuoteInput, ref: ReferenceData): QuoteResu
     };
   };
 
-  const ladderMargins = [...settings.ladder].sort((a, b) => a - b);
-  if (!ladderMargins.some((m) => Math.abs(m - settings.minMargin) < 1e-9)) {
-    ladderMargins.unshift(settings.minMargin);
+  // The floor follows the order size. Rungs below it are not offers, so the
+  // ladder starts at the floor and climbs from there.
+  const band = volumeBand(input.bags, settings);
+  const ladderMargins = [...settings.ladder]
+    .sort((a, b) => a - b)
+    .filter((m) => m > band.minMargin + 1e-9);
+  ladderMargins.unshift(band.minMargin);
+
+  if (band.belowPolicy) {
+    warnings.push({
+      text:
+        `${input.bags} bags is under the ${settings.volumeBrackets[0]?.fromBags ?? 0}-bag minimum. ` +
+        'Priced at the smallest bracket, but this is outside policy and needs admin approval.',
+      adminOnly: false,
+    });
   }
 
   return {
@@ -363,7 +446,8 @@ export function calculateQuote(input: QuoteInput, ref: ReferenceData): QuoteResu
     copExposureUsdPerLb,
     quoteCurrency: destination.quoteCurrency,
     quoteUnit: destination.quoteUnit,
-    floor: rung(settings.minMargin),
+    band,
+    floor: rung(band.minMargin),
     ladder: ladderMargins.map(rung),
     warnings,
   };
@@ -579,6 +663,33 @@ function daysBetween(iso: string, now: Date): number {
   return Math.max(0, Math.floor((now.getTime() - ms) / 86_400_000));
 }
 
+/**
+ * Would the client be better off asking for more?
+ *
+ * Compared at each side's own floor, which is the price the desk would
+ * actually quote. Reported only when the larger order genuinely costs less in
+ * total — the desk sells more coffee and the client pays less per pound, so
+ * there is no reason to sit on it.
+ */
+export function roundUpAdvice(
+  input: QuoteInput,
+  ref: ReferenceData,
+  currentTotalUsd: number,
+): RoundUpAdvice | null {
+  const brackets = [...(ref.settings.volumeBrackets ?? [])].sort((a, b) => a.fromBags - b.fromBags);
+  const here = volumeBand(input.bags, ref.settings).bracket;
+  if (!here) return null;
+
+  const next = brackets[brackets.indexOf(here) + 1];
+  if (!next) return null;
+
+  const bigger = rungAt(next.minMargin, { ...input, bags: next.fromBags }, ref);
+  const saving = currentTotalUsd - bigger.totalValueUsd;
+  if (saving <= 0) return null;
+
+  return { toBags: next.fromBags, savingUsd: saving, displayPrice: bigger.displayPrice };
+}
+
 /** Price a quote at an arbitrary margin, outside the published ladder. */
 export function rungAt(margin: number, input: QuoteInput, ref: ReferenceData): MarginRung {
   const result = calculateQuote(input, ref);
@@ -625,7 +736,8 @@ export function solveForPrice(
   return {
     margin,
     marginUsdPerLb: targetUsdPerLb - result.totalCostUsdPerLb,
-    belowFloor: margin < settings.minMargin,
+    // The floor this order is held to, which follows its size.
+    belowFloor: margin < result.band.minMargin,
     belowCost: targetUsdPerLb < result.totalCostUsdPerLb,
   };
 }

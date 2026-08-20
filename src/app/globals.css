@@ -1617,6 +1617,62 @@ tfoot.qc-total td { border-top: 2px solid var(--fc-navy); font-weight: var(--fc-
   border-top: 1px solid var(--fc-ink-100); font-size: 11px; color: var(--fc-ink-500);
 }
 
+/* ── Volume brackets ───────────────────────────────────────────────── */
+.qc-brackets { margin-top: 20px; padding-top: 18px; border-top: 1px solid var(--fc-ink-100); }
+.qc-brackets-head { margin-bottom: 12px; }
+.qc-brackets-title {
+  margin: 0 0 4px; font-family: var(--fc-font-display); font-weight: var(--fc-fw-bold);
+  font-size: 11px; letter-spacing: var(--fc-ls-eyebrow); text-transform: uppercase;
+  color: var(--fc-navy);
+}
+.qc-brackets-note { font-size: 11.5px; line-height: 1.5; color: var(--fc-ink-500); }
+.qc-bracket-drop { margin-left: 10px; font-size: 11px; color: var(--fc-danger); }
+
+.qc-deadzone {
+  display: flex; flex-direction: column; gap: 5px;
+  margin-top: 14px; padding: 12px 14px;
+  background: #fbeedd; border: 1px solid #edd3a8;
+  border-left: 4px solid var(--fc-warning); border-radius: var(--fc-radius-3);
+  font-size: 11.5px; line-height: 1.5; color: #7a4d11;
+}
+.qc-deadzone strong { font-family: var(--fc-font-display); font-size: 12px; }
+.qc-deadzone ul { margin: 2px 0; padding-left: 18px; }
+
+
+.qc-band {
+  margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--fc-ink-100);
+  font-family: var(--fc-font-mono); font-size: 10.5px; color: var(--fc-ink-500);
+}
+.qc-band.is-bad { color: var(--fc-danger); font-weight: var(--fc-fw-bold); }
+
+.qc-offpolicy,
+.qc-roundup {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  margin-bottom: 14px; padding: 13px 15px;
+  border-radius: var(--fc-radius-4); font-size: 12px; line-height: 1.5;
+}
+.qc-offpolicy > div,
+.qc-roundup > div { display: flex; flex-direction: column; gap: 3px; flex: 1 1 260px; min-width: 0; }
+.qc-offpolicy strong,
+.qc-roundup strong {
+  font-family: var(--fc-font-display); font-size: 12.5px; letter-spacing: .01em;
+}
+
+.qc-offpolicy {
+  background: #fdf0ed; border: 1px solid #e9b7ac; border-left: 5px solid var(--fc-danger);
+  color: #7d3020;
+}
+.qc-offpolicy strong { color: var(--fc-danger); text-transform: uppercase; font-size: 11.5px; }
+.qc-offpolicy-mark { display: flex; color: var(--fc-danger); flex: 0 0 auto; }
+
+.qc-roundup {
+  background: #e8f3df; border: 1px solid #c6e0b4; border-left: 5px solid var(--fc-success);
+  color: #3d6224;
+}
+.qc-roundup strong { color: #2f4d1b; }
+.qc-roundup-mark { display: flex; color: var(--fc-success); flex: 0 0 auto; }
+.qc-roundup .fc-btn { flex: 0 0 auto; }
+
 /* ── Under the floor ───────────────────────────────────────────────── */
 .qc-floor-alarm {
   display: flex; align-items: center; gap: 13px; flex-wrap: wrap;

@@ -380,6 +380,14 @@ export const SEED_SETTINGS: EngineSettings = {
      C settles daily and the whole quote hangs off it. */
   validDays: 1,
   staleAfterDays: 7,
+  /* Three-point steps. A wider step buys a larger discount but opens a run of
+     order sizes where the client pays more for less — see deadZones(). */
+  volumeBrackets: [
+    { fromBags: 50, toBags: 70, minMargin: 0.24 },
+    { fromBags: 71, toBags: 140, minMargin: 0.21 },
+    { fromBags: 141, toBags: 240, minMargin: 0.18 },
+    { fromBags: 241, toBags: null, minMargin: 0.16 },
+  ],
 };
 
 /** Fallback FX, used only until the live rates land. USD per one unit. */

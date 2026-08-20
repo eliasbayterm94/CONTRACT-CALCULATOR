@@ -13,6 +13,7 @@ import {
   explainRung,
   kcForTarget,
   reconcile,
+  roundUpAdvice,
   rungAt,
   sensitivity,
   solveForPrice,
@@ -292,9 +293,15 @@ export default function QuoteBuilder({
   // Off while the shortcut sheet is up, so its own Esc and ? are not fought over.
   useShortcuts(shortcuts, !shortcutsOpen);
 
+  const roundUp = useMemo(
+    () => (result && activeRung ? roundUpAdvice(input, reference, activeRung.totalValueUsd) : null),
+    [result, activeRung, input, reference],
+  );
+
   // Under the floor is not a footnote. It is the one thing on this screen that
   // has to stop someone, so it is derived once and shouted about everywhere.
-  const belowFloor = Boolean(activeRung && activeRung.margin < settings.minMargin - 1e-9);
+  const floorMargin = result?.band.minMargin ?? settings.minMargin;
+  const belowFloor = Boolean(activeRung && activeRung.margin < floorMargin - 1e-9);
   const shortfallUsdPerLb =
     belowFloor && result && activeRung
       ? result.floor.priceUsdPerLb - activeRung.priceUsdPerLb
@@ -552,6 +559,50 @@ export default function QuoteBuilder({
 
           {result && destination && activeRung && (
             <>
+              {result.band.belowPolicy && (
+                <div className="qc-offpolicy" role="alert">
+                  <span className="qc-offpolicy-mark" aria-hidden="true">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2">
+                      <path d="M12 8v5M12 16.5v.5" />
+                      <circle cx="12" cy="12" r="9" />
+                    </svg>
+                  </span>
+                  <div>
+                    <strong>Outside policy — {result.bags} bags</strong>
+                    <span>
+                      The smallest bracket starts at {settings.volumeBrackets[0]?.fromBags} bags. The price below is
+                      what it would take at that bracket&apos;s floor, but this one does not go out without admin.
+                    </span>
+                  </div>
+                </div>
+              )}
+
+              {roundUp && (
+                <div className="qc-roundup">
+                  <span className="qc-roundup-mark" aria-hidden="true">
+                    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <path d="M12 19V5M5 12l7-7 7 7" />
+                    </svg>
+                  </span>
+                  <div>
+                    <strong>{roundUp.toBags} bags would cost less than {result.bags}</strong>
+                    <span>
+                      The next bracket starts there, at{' '}
+                      {money(roundUp.displayPrice, destination.quoteCurrency, PRICE_DP)}/
+                      {UNIT_LABEL[destination.quoteUnit]} — {money(
+                        totalInQuoteCurrency(roundUp.savingUsd, destination.quoteCurrency, reference.fx),
+                        destination.quoteCurrency,
+                        0,
+                      )}{' '}
+                      less for more coffee.
+                    </span>
+                  </div>
+                  <button type="button" className="fc-btn fc-btn-ghost" onClick={() => setBags(roundUp.toBags)}>
+                    Take {roundUp.toBags}
+                  </button>
+                </div>
+              )}
+
               {belowFloor && (
                 <div className="qc-floor-alarm" role="alert">
                   <span className="qc-floor-alarm-mark" aria-hidden="true">
@@ -562,10 +613,10 @@ export default function QuoteBuilder({
                   </span>
                   <div className="qc-floor-alarm-body">
                     <span className="qc-floor-alarm-title">
-                      Under the {marginLabel(settings.minMargin)} floor
+                      Under the {marginLabel(floorMargin)} floor
                     </span>
                     <span className="qc-floor-alarm-detail">
-                      This quote is {percent(settings.minMargin - activeRung.margin, 2)} short. That is{' '}
+                      This quote is {percent(floorMargin - activeRung.margin, 2)} short. That is{' '}
                       {cents(shortfallUsdPerLb)}/lb, or{' '}
                       {money(
                         totalInQuoteCurrency(shortfallUsdPerLb * result.totalLbs, destination.quoteCurrency, reference.fx),
@@ -578,7 +629,7 @@ export default function QuoteBuilder({
                       </strong>.
                     </span>
                   </div>
-                  <button type="button" className="fc-btn fc-btn-navy" onClick={() => useRung(settings.minMargin)}>
+                  <button type="button" className="fc-btn fc-btn-navy" onClick={() => useRung(floorMargin)}>
                     Take it to the floor
                   </button>
                 </div>
@@ -587,7 +638,7 @@ export default function QuoteBuilder({
               <div className={`qc-headline${belowFloor ? ' is-below-floor' : ''}`}>
                 <div className="qc-hero">
                   <div className="qc-hero-label">
-                    Quote at {marginInput.trim() === '' ? `floor margin ${marginLabel(settings.minMargin)}` : marginLabel(activeRung.margin)}
+                    Quote at {marginInput.trim() === '' ? `floor margin ${marginLabel(floorMargin)}` : marginLabel(activeRung.margin)}
                   </div>
                   <div className="qc-hero-price">
                     <span className="qc-hero-big">
@@ -616,6 +667,9 @@ export default function QuoteBuilder({
                     <div className="qc-stat-value">{plain(result.bags, 0)} bags</div>
                     <div className="qc-stat-sub">
                       {plain(result.totalLbs, 0)} lb · {plain(result.containers, 2)} containers
+                    </div>
+                    <div className={`qc-band${result.band.belowPolicy ? ' is-bad' : ''}`}>
+                      {result.band.label} · floor {marginLabel(result.band.minMargin)}
                     </div>
                   </div>
                   {isAdmin ? (
@@ -656,7 +710,7 @@ export default function QuoteBuilder({
                       <input
                         className="qc-input num" type="number" step="any" inputMode="decimal"
                         aria-label="Target margin percent"
-                        placeholder={String(settings.minMargin * 100)}
+                        placeholder={String(floorMargin * 100)}
                         value={marginInput} onChange={(e) => setMarginInput(e.target.value)}
                       />
                       <span className="qc-suffix">%</span>
@@ -665,15 +719,15 @@ export default function QuoteBuilder({
                       <div className="qc-answer is-empty">Enter a margin to see the price.</div>
                     ) : (
                       <div className="qc-answer">
-                        <div className={`qc-answer-big${Number(marginInput) / 100 < settings.minMargin ? ' is-warn' : ''}`}>
+                        <div className={`qc-answer-big${Number(marginInput) / 100 < floorMargin ? ' is-warn' : ''}`}>
                           <PriceText value={activeRung.displayPrice} currency={destination.quoteCurrency} />
                         </div>
                         <div className="qc-answer-meta">
                           {cents(activeRung.priceUsdPerLb)}/lb · KC +{cents(activeRung.priceUsdPerLb - input.kcUsdPerLb)} ·{' '}
                           {money(totalInQuoteCurrency(activeRung.totalValueUsd, destination.quoteCurrency, reference.fx), destination.quoteCurrency, 0)} contract
                         </div>
-                        {Number(marginInput) / 100 < settings.minMargin && (
-                          <div className="qc-verdict is-warn">Under the {marginLabel(settings.minMargin)} floor</div>
+                        {Number(marginInput) / 100 < floorMargin && (
+                          <div className="qc-verdict is-warn">Under the {marginLabel(floorMargin)} floor</div>
                         )}
                       </div>
                     )}
@@ -713,7 +767,7 @@ export default function QuoteBuilder({
                           {solvedFromPrice.belowCost
                             ? 'Below break-even — this loses money'
                             : solvedFromPrice.belowFloor
-                              ? `Under the ${marginLabel(settings.minMargin)} floor`
+                              ? `Under the ${marginLabel(floorMargin)} floor`
                               : 'Clears the floor'}
                         </div>
                         <div className="qc-actions">
@@ -813,7 +867,7 @@ export default function QuoteBuilder({
                 </div>
                 <div className="qc-ladder-cards">
                   {result.ladder.map((rung, i) => {
-                    const isFloor = Math.abs(rung.margin - settings.minMargin) < 1e-9;
+                    const isFloor = Math.abs(rung.margin - floorMargin) < 1e-9;
                     const isActive = Math.abs(rung.margin - activeRung.margin) < 1e-9;
                     const step = i === 0 ? null : rung.displayPrice - result.ladder[i - 1].displayPrice;
                     return (
@@ -855,7 +909,7 @@ export default function QuoteBuilder({
                     </thead>
                     <tbody>
                       {result.ladder.map((rung, i) => {
-                        const isFloor = Math.abs(rung.margin - settings.minMargin) < 1e-9;
+                        const isFloor = Math.abs(rung.margin - floorMargin) < 1e-9;
                         const isActive = Math.abs(rung.margin - activeRung.margin) < 1e-9;
                         const step = i === 0 ? null : rung.displayPrice - result.ladder[i - 1].displayPrice;
                         return (
@@ -1182,13 +1236,20 @@ export default function QuoteBuilder({
                 <div className="qc-export-copy">
                   <span className="qc-export-title">Send this quote</span>
                   <span className="qc-export-sub">
-                    A one-page sheet with the terms and the price. No costs, no margin.{' '}
+                    {result.band.belowPolicy && !isAdmin
+                      ? `Under ${settings.volumeBrackets[0]?.fromBags} bags this quote cannot be sent without admin.`
+                      : 'A one-page sheet with the terms and the price. No costs, no margin.'}{' '}
                     <button type="button" className="qc-keyhint" onClick={() => setShortcutsOpen(true)}>
                       Press <kbd>?</kbd> for shortcuts
                     </button>
                   </span>
                 </div>
-                <button type="button" className="fc-btn fc-btn-navy" onClick={() => setSheet(buildSheet())}>
+                <button
+                  type="button"
+                  className="fc-btn fc-btn-navy"
+                  onClick={() => setSheet(buildSheet())}
+                  disabled={result.band.belowPolicy && !isAdmin}
+                >
                   <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                     <path d="M12 3v12M7 11l5 5 5-5M4 21h16" />
                   </svg>

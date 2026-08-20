@@ -138,6 +138,47 @@ export interface EngineSettings {
   validDays: number;
   /** How old a rate or premium may get before the desk is warned, in days. */
   staleAfterDays: number;
+  /**
+   * Floor margin by order size, largest orders last.
+   *
+   * The coffee costs the same per pound at any volume — a part load rides in a
+   * shared container, so freight and port are already shared pro rata. A
+   * volume break is therefore a commercial decision and nothing else, which is
+   * why it moves the floor rather than the cost.
+   */
+  volumeBrackets: VolumeBracket[];
+}
+
+export interface VolumeBracket {
+  fromBags: number;
+  /** Null on the last bracket: it runs to any size. */
+  toBags: number | null;
+  minMargin: number;
+}
+
+/** Which bracket an order fell into, and what it means for the quote. */
+export interface VolumeBand {
+  bracket: VolumeBracket | null;
+  minMargin: number;
+  /** Below the smallest bracket: outside policy, not a quote a trader may send. */
+  belowPolicy: boolean;
+  label: string;
+}
+
+/**
+ * An order size where asking for more costs the client less.
+ *
+ * A hard bracket steps the margin down, so near the top of a band the total
+ * for one more bag can fall below the total for one fewer. Both totals are
+ * real; the smaller order is simply the worse deal, and the desk should say so
+ * rather than let the client find it.
+ */
+export interface RoundUpAdvice {
+  /** The first bag count of the next bracket. */
+  toBags: number;
+  savingUsd: number;
+  /** The price the client would pay there, in their own currency and unit. */
+  displayPrice: number;
 }
 
 /** One rung of the "what if the C moves" table. */
@@ -296,6 +337,8 @@ export interface QuoteResult {
   waivedFixedCost: boolean;
   /** Share of the differential that is peso-denominated, i.e. TRM-exposed. */
   copExposureUsdPerLb: number;
+  /** The volume bracket this order fell into, and the floor it sets. */
+  band: VolumeBand;
   quoteCurrency: CurrencyCode;
   quoteUnit: QuoteUnit;
   floor: MarginRung;

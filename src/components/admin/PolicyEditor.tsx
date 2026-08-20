@@ -1,8 +1,9 @@
 'use client';
 
-import { useActionState, useEffect, useState } from 'react';
+import { useActionState, useEffect, useMemo, useState } from 'react';
 import SaveBar from './SaveBar';
 import { saveEngineSettings, type ActionResult } from '@/app/actions';
+import { deadZones } from '@/lib/pricing/engine';
 import type { EngineSettings } from '@/lib/pricing/types';
 
 /** How margin is defined, the floor, the rungs, and how long carry is free. */
@@ -26,12 +27,63 @@ export default function PolicyEditor({
   };
   const [form, setForm] = useState(initial);
 
+  /**
+   * The bracket table, edited as text so a half-typed row does not snap back.
+   * Only the starting quantity is entered: each band runs to the bag before
+   * the next one begins, which is what makes a gap or an overlap impossible.
+   */
+  const asRows = () =>
+    (settings.volumeBrackets ?? []).map((b) => ({
+      from: String(b.fromBags),
+      margin: Number((b.minMargin * 100).toFixed(2)).toString(),
+    }));
+  const [brackets, setBrackets] = useState(asRows);
+
+  const setBracket = (i: number, field: 'from' | 'margin', value: string) =>
+    setBrackets((rows) => rows.map((r, j) => (j === i ? { ...r, [field]: value } : r)));
+
+  const sorted = useMemo(
+    () =>
+      brackets
+        .map((b) => ({ fromBags: Number(b.from), minMargin: Number(b.margin) / 100 }))
+        .filter((b) => Number.isFinite(b.fromBags) && b.fromBags > 0 && Number.isFinite(b.minMargin))
+        .sort((a, b) => a.fromBags - b.fromBags),
+    [brackets],
+  );
+
+  const bandLabel = (i: number) => {
+    const from = Number(brackets[i]?.from);
+    if (!Number.isFinite(from) || from <= 0) return '—';
+    const next = sorted.find((b) => b.fromBags > from);
+    return next ? `${from}–${next.fromBags - 1} bags` : `${from}+ bags`;
+  };
+
+  // Recomputed as the margins are typed, so the run of sizes a step opens up
+  // is on screen before it is saved rather than found by a client later.
+  const dead = useMemo(
+    () =>
+      deadZones(
+        sorted.map((b, i, all) => ({
+          fromBags: b.fromBags,
+          toBags: i === all.length - 1 ? null : all[i + 1].fromBags - 1,
+          minMargin: b.minMargin,
+        })),
+      ),
+    [sorted],
+  );
+
   // Adopt the saved policy once it lands, so the bar stops reporting changes.
-  const savedJson = JSON.stringify(initial);
-  useEffect(() => { setForm(initial); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [savedJson]);
-  const dirty = Object.keys(initial).filter(
-    (k) => form[k as keyof typeof initial] !== initial[k as keyof typeof initial],
-  ).length;
+  const savedJson = JSON.stringify({ ...initial, brackets: settings.volumeBrackets });
+  useEffect(() => {
+    setForm(initial);
+    setBrackets(asRows());
+    /* eslint-disable-next-line react-hooks/exhaustive-deps */
+  }, [savedJson]);
+  const bracketsChanged = JSON.stringify(brackets) !== JSON.stringify(asRows());
+  const dirty =
+    Object.keys(initial).filter(
+      (k) => form[k as keyof typeof initial] !== initial[k as keyof typeof initial],
+    ).length + (bracketsChanged ? 1 : 0);
   const set = (k: keyof typeof initial, v: string) => setForm((f) => ({ ...f, [k]: v }));
   const changed = (k: keyof typeof initial) => form[k] !== initial[k];
 
@@ -75,7 +127,10 @@ export default function PolicyEditor({
               type="number" step="any" value={form.minMargin} disabled={locked}
               onChange={(e) => set('minMargin', e.target.value)}
             />
-            <p className="qc-hint">No quote is offered below this.</p>
+            <p className="qc-hint">
+              Only used when no volume brackets are set. With brackets, the floor follows the order
+              size and the table below decides it.
+            </p>
           </div>
           <div className="qc-field">
             <label className="qc-label" htmlFor="freeHoldMonths">Free carry months</label>
@@ -127,6 +182,86 @@ export default function PolicyEditor({
             />
             <p className="qc-hint">Applies to KC, quality premiums and exchange rates.</p>
           </div>
+        </div>
+
+        <div className="qc-brackets">
+          <div className="qc-brackets-head">
+            <h3 className="qc-brackets-title">Volume brackets</h3>
+            <span className="qc-brackets-note">
+              The floor an order is held to, by size. Each band runs to the bag before the next
+              one starts; the last runs to any size.
+            </span>
+          </div>
+
+          <div className="qc-table-wrap">
+            <table className="qc-table qc-cards">
+              <thead>
+                <tr><th>From bags</th><th className="qc-num">Floor margin %</th><th>Band</th></tr>
+              </thead>
+              <tbody>
+                {brackets.map((b, i) => (
+                  <tr key={i}>
+                    <td>
+                      <input
+                        name="bracket_from" className="qc-input num"
+                        type="number" step={1} min={1} value={b.from} disabled={locked}
+                        aria-label={`Bracket ${i + 1} starts at`}
+                        onChange={(e) => setBracket(i, 'from', e.target.value)}
+                      />
+                    </td>
+                    <td className="qc-num">
+                      <input
+                        name="bracket_margin" className="qc-input num"
+                        type="number" step="any" min={0} max={99} value={b.margin} disabled={locked}
+                        aria-label={`Bracket ${i + 1} floor margin`}
+                        onChange={(e) => setBracket(i, 'margin', e.target.value)}
+                      />
+                    </td>
+                    <td style={{ color: 'var(--fc-ink-500)' }}>
+                      {bandLabel(i)}
+                      {!locked && brackets.length > 1 && (
+                        <button
+                          type="button" className="qc-linkish qc-bracket-drop"
+                          onClick={() => setBrackets(brackets.filter((_, j) => j !== i))}
+                        >
+                          remove
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {!locked && (
+            <div className="qc-actions" style={{ marginTop: 10 }}>
+              <button
+                type="button" className="fc-btn fc-btn-ghost"
+                onClick={() => setBrackets([...brackets, { from: '', margin: '' }])}
+              >
+                Add a bracket
+              </button>
+            </div>
+          )}
+
+          {dead.length > 0 && (
+            <div className="qc-deadzone" role="status">
+              <strong>These steps leave order sizes where asking for more costs less</strong>
+              <ul>
+                {dead.map((d) => (
+                  <li key={d.from}>
+                    {d.from === d.to ? `${d.from} bags` : `${d.from}–${d.to} bags`} — the client is
+                    better off taking {d.nextBags}
+                  </li>
+                ))}
+              </ul>
+              <span>
+                Narrow the steps to shrink these. The quote screen offers the round-up whenever it
+                lands in one, so nothing is hidden either way.
+              </span>
+            </div>
+          )}
         </div>
       </div>
       <SaveBar dirtyCount={dirty} onReset={() => setForm(initial)} state={state} label="Save policy" locked={locked} />

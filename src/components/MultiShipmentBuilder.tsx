@@ -4,7 +4,7 @@ import { useCallback, useMemo, useState } from 'react';
 import NumberInput from './NumberInput';
 import PriceText from './PriceText';
 import QuoteSheetDialog from './QuoteSheetDialog';
-import { calculateContract, marginAtPrice, priceAtMargin, validUntil } from '@/lib/pricing/engine';
+import { calculateContract, marginAtPrice, priceAtMargin, validUntil, volumeBand } from '@/lib/pricing/engine';
 import { MONTH_OF_YEAR_NAMES, monthOfYear, premiumForMonth } from '@/lib/pricing/premium';
 import type { PremiumOverride, SeasonalPremium } from '@/lib/store/types';
 import { INCOTERMS, type Incoterm, type QuoteInput, type ReferenceData, type Shipment } from '@/lib/pricing/types';
@@ -122,7 +122,7 @@ export default function MultiShipmentBuilder({
       usdPerLb,
       implied,
       belowCost: usdPerLb < contract.weightedCostUsdPerLb,
-      belowFloor: implied < settings.minMargin,
+      belowFloor: implied < floorMargin,
       perShipment: contract.shipments.map((s) => ({
         label: s.label,
         price: ceilPrice(
@@ -179,6 +179,19 @@ export default function MultiShipmentBuilder({
       },
     };
   }, [contract, destination, clientName, incoterm, reference, processKey, packagingKey, fromMonth, safeTo, effectiveHold]);
+
+  /**
+   * The bracket the whole contract earns.
+   *
+   * A volume contract is one commitment split across months, so the client's
+   * three hundred bags count as three hundred — not as three orders of a
+   * hundred. Logistics still price per shipment; only the floor is shared.
+   */
+  const band = useMemo(
+    () => volumeBand(contract?.totalBags ?? 0, settings),
+    [contract?.totalBags, settings],
+  );
+  const floorMargin = band.minMargin;
 
   const inQuote = (usd: number) =>
     destination ? totalInQuoteCurrency(usd, destination.quoteCurrency, reference.fx) : usd;
@@ -415,7 +428,15 @@ export default function MultiShipmentBuilder({
               </div>
               <dl className="qc-cons-side">
                 <div className="qc-cons-item"><dt>Shipments</dt><dd>{contract.shipments.length}</dd></div>
-                <div className="qc-cons-item"><dt>Total volume</dt><dd>{plain(contract.totalBags, 0)} bags</dd></div>
+                <div className="qc-cons-item">
+                  <dt>Total volume</dt>
+                  <dd>
+                    {plain(contract.totalBags, 0)} bags
+                    <span className={`qc-band${band.belowPolicy ? ' is-bad' : ''}`}>
+                      {band.label} · floor {marginLabel(floorMargin)}
+                    </span>
+                  </dd>
+                </div>
                 <div className="qc-cons-item"><dt>Weighted KC</dt><dd>{cents(contract.weightedKcUsdPerLb)}</dd></div>
                 <div className="qc-cons-item"><dt>Contract value</dt><dd>{money(inQuote(contract.totalValueUsd), destination.quoteCurrency, 0)}</dd></div>
               </dl>
@@ -451,7 +472,7 @@ export default function MultiShipmentBuilder({
                   <span className="qc-suffix">%</span>
                 </div>
                 <div className="qc-answer">
-                  <div className={`qc-answer-big${marginValue < settings.minMargin ? ' is-warn' : ''}`}>
+                  <div className={`qc-answer-big${marginValue < floorMargin ? ' is-warn' : ''}`}>
                     <PriceText value={contract.consolidatedDisplay} currency={destination.quoteCurrency} />
                   </div>
                   <div className="qc-answer-meta">
@@ -461,8 +482,8 @@ export default function MultiShipmentBuilder({
                     <br />
                     {money(inQuote(contract.totalValueUsd), destination.quoteCurrency, 0)} contract value
                   </div>
-                  {marginValue < settings.minMargin && (
-                    <div className="qc-verdict is-warn">Under the {marginLabel(settings.minMargin)} floor</div>
+                  {marginValue < floorMargin && (
+                    <div className="qc-verdict is-warn">Under the {marginLabel(floorMargin)} floor</div>
                   )}
                 </div>
               </div>
@@ -499,7 +520,7 @@ export default function MultiShipmentBuilder({
                       {solvedTarget.belowCost
                         ? 'Below blended break-even — this loses money'
                         : solvedTarget.belowFloor
-                          ? `Under the ${marginLabel(settings.minMargin)} floor`
+                          ? `Under the ${marginLabel(floorMargin)} floor`
                           : 'Clears the floor'}
                     </div>
                     <div className="qc-actions">

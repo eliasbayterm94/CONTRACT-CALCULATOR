@@ -361,6 +361,27 @@ async function saveEngineSettingsImpl(
   }
   const freeHoldMonths = Math.max(0, Math.round(num(form, 'freeHoldMonths')));
   const validDays = Math.max(1, Math.round(num(form, 'validDays', 1)));
+
+  // The bracket table, read back in the order the rows were rendered.
+  const bracketFroms = form.getAll('bracket_from').map((v) => Math.round(Number(v)));
+  const bracketMargins = form.getAll('bracket_margin').map((v) => Number(v) / 100);
+  const volumeBrackets = bracketFroms
+    .map((fromBags, i) => ({ fromBags, minMargin: bracketMargins[i] }))
+    .filter((b) => Number.isFinite(b.fromBags) && b.fromBags > 0 && Number.isFinite(b.minMargin))
+    .sort((a, b) => a.fromBags - b.fromBags)
+    // A bracket runs up to the bag before the next one starts, and the last
+    // runs to any size — so the bands can never gap or overlap.
+    .map((b, i, all) => ({
+      fromBags: b.fromBags,
+      toBags: i === all.length - 1 ? null : all[i + 1].fromBags - 1,
+      minMargin: b.minMargin,
+    }));
+  if (volumeBrackets.some((b) => b.minMargin < 0 || b.minMargin >= 1)) {
+    return { ok: false, message: 'Every bracket margin must be between 0% and 100%.' };
+  }
+  if (volumeBrackets.length && new Set(bracketFroms).size !== bracketFroms.length) {
+    return { ok: false, message: 'Two brackets cannot start at the same quantity.' };
+  }
   const staleAfterDays = Math.max(1, Math.round(num(form, 'staleAfterDays', 7)));
 
   await mutateState((state) => {
@@ -373,6 +394,7 @@ async function saveEngineSettingsImpl(
       freeHoldMonths,
       validDays,
       staleAfterDays,
+      volumeBrackets,
     });
     appendAudit(state, g.actor, 'settings', null, 'update', { minMargin, ladder, freeHoldMonths });
   });

@@ -424,8 +424,16 @@ describe('FX sensitivity', () => {
 describe('warnings', () => {
   it('separates what a trader can act on from what only admin can', () => {
     const r = calculateQuote(input({ bags: 137, destinationKey: 'dubai', incoterm: 'DDP', holdMonths: 6 }), ref);
-    expect(r.warnings.some((w) => !w.adminOnly && w.text.includes('containers'))).toBe(true);
+    // A part load is normal and correctly costed while it travels
+    // consolidated, so the caveat is a costing note for admin, not something
+    // a trader has to weigh on every quote.
+    expect(r.warnings.some((w) => w.adminOnly && w.text.includes('containers'))).toBe(true);
     expect(r.warnings.some((w) => w.adminOnly && w.text.includes('Storage'))).toBe(true);
+  });
+
+  it('tells a trader, not just admin, when the order is under the minimum', () => {
+    const r = calculateQuote(input({ bags: 20 }), ref);
+    expect(r.warnings.some((w) => !w.adminOnly && /minimum/i.test(w.text))).toBe(true);
   });
 
   it('rejects an unknown destination', () => {
