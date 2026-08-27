@@ -1617,6 +1617,22 @@ tfoot.qc-total td { border-top: 2px solid var(--fc-navy); font-weight: var(--fc-
   border-top: 1px solid var(--fc-ink-100); font-size: 11px; color: var(--fc-ink-500);
 }
 
+/* ── A shipment priced by hand ─────────────────────────────────────── */
+.qc-input.num.set { width: 92px; }
+.qc-price-cell.is-set {
+  position: relative;
+  color: var(--fc-navy);
+}
+.qc-price-cell.is-set::after {
+  content: 'set'; position: absolute; top: -7px; right: -2px;
+  padding: 1px 5px; border-radius: var(--fc-radius-2);
+  background: var(--fc-yellow); color: var(--fc-navy);
+  font-family: var(--fc-font-display); font-weight: var(--fc-fw-bold);
+  font-size: 7.5px; letter-spacing: var(--fc-ls-eyebrow); text-transform: uppercase;
+}
+.qc-ship-margin { font-family: var(--fc-font-mono); color: var(--fc-ink-500); }
+.qc-ship-margin.is-under { color: var(--fc-danger); font-weight: var(--fc-fw-bold); }
+
 /* ── Seeing the desk as a trader ───────────────────────────────────── */
 .qc-viewtoggle {
   display: inline-flex; align-items: center; gap: 8px;

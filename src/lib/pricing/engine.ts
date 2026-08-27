@@ -795,6 +795,13 @@ export function calculateContract(
       { ...base, bags: s.bags, kcUsdPerLb: s.kcCents / 100 },
       ref,
     );
+
+    // A price set by hand replaces the margin for that shipment. It is taken
+    // as given — rounded the same way, but never adjusted — because it is a
+    // number someone has already said out loud.
+    const set = s.priceOverride;
+    const hasSet = typeof set === 'number' && Number.isFinite(set) && set > 0;
+
     const raw = priceAtMargin(
       margin,
       result.totalCostUsdPerLb,
@@ -802,7 +809,7 @@ export function calculateContract(
       ref.settings.marginMode,
     );
     const displayPrice = ceilPrice(
-      toQuoteUnit(raw, destination.quoteCurrency, destination.quoteUnit, ref.fx),
+      hasSet ? set : toQuoteUnit(raw, destination.quoteCurrency, destination.quoteUnit, ref.fx),
     );
     const priceUsdPerLb = fromQuoteUnit(
       displayPrice,
@@ -816,6 +823,13 @@ export function calculateContract(
       priceUsdPerLb,
       displayPrice,
       valueUsd: priceUsdPerLb * result.totalLbs,
+      pricedBy: hasSet ? ('set' as const) : ('margin' as const),
+      marginAchieved: marginAtPrice(
+        priceUsdPerLb,
+        result.totalCostUsdPerLb,
+        result.marginBaseUsdPerLb,
+        ref.settings.marginMode,
+      ),
     };
   });
 
@@ -828,20 +842,26 @@ export function calculateContract(
   const weightedMarginBaseUsdPerLb = weight((x) => x.result.marginBaseUsdPerLb);
   const weightedKcUsdPerLb = weight((x) => x.kcCents / 100);
 
-  const blendedRaw = priceAtMargin(
-    margin,
-    weightedCostUsdPerLb,
-    weightedMarginBaseUsdPerLb,
-    ref.settings.marginMode,
-  );
+  // The blend is what the contract actually comes to over its pounds, not a
+  // price recomputed from the average cost. With every shipment on the same
+  // margin the two agree; once one carries a price of its own they do not, and
+  // only this one is still the figure the client would arrive at.
+  const totalValueUsd = priced.reduce((sum, x) => sum + x.valueUsd, 0);
+  const blendedUsdPerLb = totalLbs > 0 ? totalValueUsd / totalLbs : 0;
   const consolidatedDisplay = ceilPrice(
-    toQuoteUnit(blendedRaw, destination.quoteCurrency, destination.quoteUnit, ref.fx),
+    toQuoteUnit(blendedUsdPerLb, destination.quoteCurrency, destination.quoteUnit, ref.fx),
   );
   const consolidatedUsdPerLb = fromQuoteUnit(
     consolidatedDisplay,
     destination.quoteCurrency,
     destination.quoteUnit,
     ref.fx,
+  );
+  const blendedMargin = marginAtPrice(
+    consolidatedUsdPerLb,
+    weightedCostUsdPerLb,
+    weightedMarginBaseUsdPerLb,
+    ref.settings.marginMode,
   );
 
   if (priced.some((x) => x.bags <= 0)) {
@@ -861,10 +881,12 @@ export function calculateContract(
     weightedKcUsdPerLb,
     consolidatedUsdPerLb,
     consolidatedDisplay,
+    blendedMargin,
+    setPriceCount: priced.filter((x) => x.pricedBy === 'set').length,
     // The contract is the sum of its shipment lines — that is the figure a
     // client gets by adding the quote up. The blended price is a summary on
     // top of it, rounded on its own.
-    totalValueUsd: priced.reduce((sum, x) => sum + x.valueUsd, 0),
+    totalValueUsd,
     quoteCurrency: destination.quoteCurrency,
     quoteUnit: destination.quoteUnit,
     warnings,

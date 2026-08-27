@@ -366,6 +366,14 @@ export interface Shipment {
   /** KC for this shipment's month, in US cents/lb. */
   kcCents: number;
   bags: number;
+  /**
+   * A price set by hand for this shipment, in the client's currency and unit.
+   *
+   * Null means the contract margin decides it. A month is sometimes agreed on
+   * its own — a price already given, a lot already committed — and the
+   * question that follows is what it does to the blend.
+   */
+  priceOverride?: number | null;
 }
 
 export interface ShipmentResult extends Shipment {
@@ -373,6 +381,10 @@ export interface ShipmentResult extends Shipment {
   priceUsdPerLb: number;
   displayPrice: number;
   valueUsd: number;
+  /** Whether the price came from the contract margin or was set by hand. */
+  pricedBy: 'margin' | 'set';
+  /** What this shipment's price actually earns, once it is fixed. */
+  marginAchieved: number;
 }
 
 export interface ContractResult {
@@ -387,6 +399,10 @@ export interface ContractResult {
   /** The single blended price quoted for the whole contract. */
   consolidatedUsdPerLb: number;
   consolidatedDisplay: number;
+  /** The margin the blend actually earns, after any price set by hand. */
+  blendedMargin: number;
+  /** How many shipments carry a price of their own. */
+  setPriceCount: number;
   /** Sum of the shipment lines — what a client gets by adding the quote up. */
   totalValueUsd: number;
   quoteCurrency: CurrencyCode;

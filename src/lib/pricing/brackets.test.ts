@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { calculateQuote, deadZones, roundUpAdvice, volumeBand } from './engine';
+import {
+  calculateContract,
+  calculateQuote,
+  deadZones,
+  marginAtPrice,
+  roundUpAdvice,
+  volumeBand,
+} from './engine';
 import {
   SEED_COST_LINES, SEED_DESTINATIONS, SEED_FX, SEED_PACKAGING, SEED_PROCESSES, SEED_SETTINGS,
 } from './reference';
@@ -201,5 +208,83 @@ describe('what the coffee type adds', () => {
   it('names the type it priced, for the breakdown to show', () => {
     expect(priceOf('organic').typeLabel).toBe('Organic');
     expect(priceOf('washed').typeLabel).toBe('Fully washed');
+  });
+});
+
+describe('a shipment priced by hand', () => {
+  const ship = (id: string, kcCents: number, bags: number, priceOverride: number | null = null) => ({
+    id, label: id, kcCents, bags, priceOverride,
+  });
+  const base = {
+    destinationKey: 'ny', incoterm: 'DDP' as const, processKey: 'washed', packagingKey: 'jute_70',
+    premiumUsdPerLb: 0.45, holdMonths: 2,
+    fromMonth: '2026-08', toMonth: '2026-12', waiveFixedCost: false,
+  };
+
+  it('leaves everything as it was when no price is set', () => {
+    const c = calculateContract([ship('a', 320, 100), ship('b', 340, 150)], base, 0.2, ref);
+    expect(c.setPriceCount).toBe(0);
+    expect(c.shipments.every((s) => s.pricedBy === 'margin')).toBe(true);
+    // Every shipment on one margin: the blend earns it, plus the sliver that
+    // rounding each price up to the cent adds.
+    expect(c.blendedMargin).toBeGreaterThanOrEqual(0.2);
+    expect(c.blendedMargin).toBeLessThan(0.201);
+  });
+
+  it('takes the price it was given, and marks it', () => {
+    const c = calculateContract([ship('a', 320, 100, 6.5), ship('b', 340, 150)], base, 0.2, ref);
+    const [a, b] = c.shipments;
+    expect(a.pricedBy).toBe('set');
+    expect(a.displayPrice).toBe(6.5);
+    expect(b.pricedBy).toBe('margin');
+    expect(c.setPriceCount).toBe(1);
+  });
+
+  it('reports what a hand-set price actually earns', () => {
+    const c = calculateContract([ship('a', 320, 100, 6.5)], base, 0.2, ref);
+    const a = c.shipments[0];
+    // Not the contract margin — the one this price leaves against its own cost.
+    expect(a.marginAchieved).toBeCloseTo(
+      marginAtPrice(a.priceUsdPerLb, a.result.totalCostUsdPerLb, a.result.marginBaseUsdPerLb, 'on_price'),
+      10,
+    );
+    expect(a.marginAchieved).not.toBeCloseTo(0.2, 3);
+  });
+
+  it('carries the set price into the blend', () => {
+    const onMargin = calculateContract([ship('a', 320, 100), ship('b', 340, 150)], base, 0.2, ref);
+    const dearer = calculateContract([ship('a', 320, 100, 9), ship('b', 340, 150)], base, 0.2, ref);
+    expect(dearer.consolidatedDisplay).toBeGreaterThan(onMargin.consolidatedDisplay);
+    expect(dearer.totalValueUsd).toBeGreaterThan(onMargin.totalValueUsd);
+  });
+
+  it('blends by volume, not by shipment count', () => {
+    // The small shipment is dear, the large one is not. The blend must lean
+    // to the large one.
+    const c = calculateContract([ship('a', 320, 10, 9), ship('b', 320, 490, 5)], base, 0.2, ref);
+    expect(c.consolidatedDisplay).toBeLessThan(5.2);
+    expect(c.consolidatedDisplay).toBeGreaterThan(5);
+  });
+
+  it('is the price the client arrives at by adding the contract up', () => {
+    const c = calculateContract([ship('a', 320, 100, 6.5), ship('b', 340, 150, 5.75)], base, 0.2, ref);
+    const perLb = c.totalValueUsd / c.totalLbs;
+    // Rounded up like any quoted price, so never below what the lines sum to.
+    expect(c.consolidatedUsdPerLb).toBeGreaterThanOrEqual(perLb - 1e-9);
+    expect(c.consolidatedUsdPerLb - perLb).toBeLessThan(0.01);
+  });
+
+  it('ignores a price that is not a price', () => {
+    for (const bad of [0, -3, Number.NaN]) {
+      const c = calculateContract([ship('a', 320, 100, bad)], base, 0.2, ref);
+      expect(c.shipments[0].pricedBy).toBe('margin');
+    }
+  });
+
+  it('lets the contract margin still drive the rest', () => {
+    const low = calculateContract([ship('a', 320, 100, 6.5), ship('b', 340, 150)], base, 0.18, ref);
+    const high = calculateContract([ship('a', 320, 100, 6.5), ship('b', 340, 150)], base, 0.28, ref);
+    expect(low.shipments[0].displayPrice).toBe(high.shipments[0].displayPrice);
+    expect(high.shipments[1].displayPrice).toBeGreaterThan(low.shipments[1].displayPrice);
   });
 });

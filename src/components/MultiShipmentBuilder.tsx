@@ -105,11 +105,17 @@ export default function MultiShipmentBuilder({
   const settings = reference.settings;
 
   const update = useCallback(
-    (id: string, field: 'label' | 'kcCents' | 'bags', value: string | number) => {
+    (id: string, field: 'label' | 'kcCents' | 'bags' | 'priceOverride', value: string | number | null) => {
       setShipments((prev) => prev.map((s) => (s.id === id ? { ...s, [field]: value } : s)));
     },
     [],
   );
+
+  const band = useMemo(
+    () => volumeBand(contract?.totalBags ?? 0, settings),
+    [contract?.totalBags, settings],
+  );
+  const floorMargin = band.minMargin;
 
   const solvedTarget = useMemo(() => {
     if (!contract || !destination || target.trim() === '') return null;
@@ -133,7 +139,7 @@ export default function MultiShipmentBuilder({
         ),
       })),
     };
-  }, [contract, destination, target, reference.fx, settings]);
+  }, [contract, destination, target, reference.fx, settings, floorMargin]);
 
   // The trader's own clock, so the date on the sheet is the day they are on.
   const [today] = useState(() => new Date());
@@ -187,11 +193,6 @@ export default function MultiShipmentBuilder({
    * three hundred bags count as three hundred — not as three orders of a
    * hundred. Logistics still price per shipment; only the floor is shared.
    */
-  const band = useMemo(
-    () => volumeBand(contract?.totalBags ?? 0, settings),
-    [contract?.totalBags, settings],
-  );
-  const floorMargin = band.minMargin;
 
   // Same rule as the single quote: anything but the type the select opens on
   // is named in the headline, so a contract cannot be built on the wrong one.
@@ -335,7 +336,9 @@ export default function MultiShipmentBuilder({
                     <th className="qc-num">Bags</th>
                     <th className="qc-num">Pounds</th>
                     <th className="qc-num">Cost ¢/lb</th>
+                    <th className="qc-num">Set price {unitLabel}</th>
                     <th className="qc-num">Price {unitLabel}</th>
+                    <th className="qc-num">Margin</th>
                     <th className="qc-num">Value</th>
                     <th />
                   </tr>
@@ -363,7 +366,24 @@ export default function MultiShipmentBuilder({
                       </td>
                       <td className="qc-num">{plain(s.result.totalLbs, 0)}</td>
                       <td className="qc-num">{cents(s.result.totalCostUsdPerLb)}</td>
-                      <td className="qc-price-cell"><PriceText value={s.displayPrice} currency={destination.quoteCurrency} /></td>
+                      <td className="qc-num">
+                        <input
+                          className={`qc-input num set${s.pricedBy === 'set' ? ' is-dirty' : ''}`}
+                          type="number" step="any" min={0} inputMode="decimal"
+                          aria-label={`Set price for ${s.label}`}
+                          placeholder="—"
+                          value={s.priceOverride ?? ''}
+                          onChange={(e) =>
+                            update(s.id, 'priceOverride', e.target.value === '' ? null : Number(e.target.value))
+                          }
+                        />
+                      </td>
+                      <td className={`qc-price-cell${s.pricedBy === 'set' ? ' is-set' : ''}`}>
+                        <PriceText value={s.displayPrice} currency={destination.quoteCurrency} />
+                      </td>
+                      <td className={`qc-num qc-ship-margin${s.marginAchieved < floorMargin ? ' is-under' : ''}`}>
+                        {percent(s.marginAchieved, 1)}
+                      </td>
                       <td className="qc-num">{money(inQuote(s.valueUsd), destination.quoteCurrency, 0)}</td>
                       <td>
                         <button
@@ -422,7 +442,11 @@ export default function MultiShipmentBuilder({
             <div className="qc-cons-grid">
               <div>
                 <div className="qc-hero-label">
-                  <span>Consolidated price at {marginLabel(marginValue)}</span>
+                  <span>
+                    {contract.setPriceCount > 0
+                      ? `Consolidated price · blend earns ${marginLabel(contract.blendedMargin)}`
+                      : `Consolidated price at ${marginLabel(marginValue)}`}
+                  </span>
                   {flaggedType && (
                     <span className="qc-typetag">
                       <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" aria-hidden="true">
@@ -442,6 +466,11 @@ export default function MultiShipmentBuilder({
                   <span className="fc-pill">{cents(contract.consolidatedUsdPerLb)}/lb blended</span>
                   <span className="fc-pill">KC +{cents(contract.consolidatedUsdPerLb - contract.weightedKcUsdPerLb)} avg</span>
                   <span className="fc-pill">break-even {cents(contract.weightedCostUsdPerLb)}</span>
+                  {contract.setPriceCount > 0 && (
+                    <span className="qc-waived-flag">
+                      {contract.setPriceCount} of {contract.shipments.length} priced by hand
+                    </span>
+                  )}
                   {contract.shipments[0]?.result.waivedFixedCost && <span className="qc-waived-flag">Fixed cost waived</span>}
                 </div>
               </div>
@@ -485,7 +514,13 @@ export default function MultiShipmentBuilder({
                   </span>
                   <h3>Margin → prices</h3>
                 </div>
-                <p className="qc-solver-sub">Sets the margin on every shipment. The table and the blended price follow.</p>
+                <p className="qc-solver-sub">
+                  {contract.setPriceCount > 0
+                    ? `Sets the margin on the ${contract.shipments.length - contract.setPriceCount} shipment${
+                        contract.shipments.length - contract.setPriceCount === 1 ? '' : 's'
+                      } without a price of their own. The blend follows.`
+                    : 'Sets the margin on every shipment. The table and the blended price follow.'}
+                </p>
                 <div className="qc-inputrow">
                   <input className="qc-input num" type="number" step="any" inputMode="decimal" aria-label="Target margin percent" value={margin} onChange={(e) => setMargin(e.target.value)} />
                   <span className="qc-suffix">%</span>
