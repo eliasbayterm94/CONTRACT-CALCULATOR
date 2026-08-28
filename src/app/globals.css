@@ -1617,6 +1617,45 @@ tfoot.qc-total td { border-top: 2px solid var(--fc-navy); font-weight: var(--fc-
   border-top: 1px solid var(--fc-ink-100); font-size: 11px; color: var(--fc-ink-500);
 }
 
+/* ── The price board ───────────────────────────────────────────────── */
+.qc-board-bar {
+  padding: 12px 16px; background: var(--fc-cream);
+  border-bottom: 1px solid var(--fc-ink-100);
+}
+.qc-board-controls { display: flex; gap: 9px; flex-wrap: wrap; align-items: center; }
+.qc-board-controls .qc-select { min-width: 150px; width: auto; flex: 0 1 auto; }
+.qc-board-controls .fc-btn.is-on {
+  background: var(--fc-yellow); border-color: var(--fc-yellow); color: var(--fc-navy);
+  font-weight: var(--fc-fw-bold);
+}
+
+.qc-seg { display: inline-flex; border: 1px solid var(--fc-ink-100); border-radius: var(--fc-radius-3); overflow: hidden; }
+.qc-seg-btn {
+  background: #fff; border: 0; cursor: pointer; padding: 0 14px; min-height: 36px;
+  font-family: var(--fc-font-display); font-weight: var(--fc-fw-bold);
+  font-size: 10px; letter-spacing: var(--fc-ls-eyebrow); color: var(--fc-ink-500);
+  border-right: 1px solid var(--fc-ink-100);
+}
+.qc-seg-btn:last-child { border-right: 0; }
+.qc-seg-btn.is-on { background: var(--fc-navy); color: #fff; }
+
+table.qc-board th { vertical-align: bottom; }
+.qc-board-unit {
+  display: block; margin-top: 2px;
+  font-family: var(--fc-font-mono); font-size: 9px; letter-spacing: 0;
+  text-transform: none; color: var(--fc-ink-300);
+}
+.qc-board-floor {
+  display: block; margin-top: 2px;
+  font-family: var(--fc-font-mono); font-size: 10px; color: var(--fc-ink-300);
+}
+.qc-board-cell strong { font-family: var(--fc-font-mono); font-size: 14px; color: var(--fc-navy); }
+.qc-board-alt {
+  display: block; margin-top: 2px;
+  font-family: var(--fc-font-mono); font-size: 10px; color: var(--fc-ink-300);
+}
+table.qc-board tbody tr:hover { background: var(--fc-cream); }
+
 /* ── Two copies of the quote ───────────────────────────────────────── */
 .qc-export-actions { display: flex; gap: 9px; flex-wrap: wrap; }
 .qc-export-internal {

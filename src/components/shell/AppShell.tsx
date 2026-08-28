@@ -30,8 +30,15 @@ const SlidersIcon = (
   </svg>
 );
 
+const GridIcon = (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+    <path d="M3 9h18M3 15h18M9 3v18M15 3v18" />
+  </svg>
+);
+
 const TRADING: NavItem[] = [
   { href: '/', label: 'New quote', icon: ChartIcon },
+  { href: '/board', label: 'Price board', icon: GridIcon },
   { href: '/multi', label: 'Multi-shipment', icon: LayersIcon, adminOnly: true },
 ];
 
