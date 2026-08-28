@@ -38,15 +38,10 @@ const TRADING: NavItem[] = [
 const ADMIN: NavItem[] = [{ href: '/admin', label: 'Rates & costs', icon: SlidersIcon }];
 
 export default function AppShell({
-  admin,
-  realAdmin,
   previewing,
   children,
 }: {
-  /** Who the screens should draw for — null while an admin previews the trader view. */
-  admin: string | null;
-  /** Who is actually signed in. Never null just because of a preview. */
-  realAdmin: string | null;
+  /** True while the desk is looking at its own screens as a trader would. */
   previewing: boolean;
   children: React.ReactNode;
 }) {
@@ -65,7 +60,7 @@ export default function AppShell({
     return () => document.removeEventListener('keydown', onKey);
   }, []);
 
-  const visible = (items: NavItem[]) => items.filter((i) => !i.adminOnly || admin);
+  const visible = (items: NavItem[]) => items.filter((i) => !i.adminOnly || !previewing);
   const title = [...TRADING, ...ADMIN].find((i) => i.href === pathname)?.label ?? 'Quote desk';
 
   return (
@@ -108,7 +103,7 @@ export default function AppShell({
               </Link>
             ))}
           </div>
-          {admin && (
+          {!previewing && (
             <div className="fc-sidebar-section">
               <div className="fc-sidebar-section-label">Admin</div>
               {ADMIN.map((item) => (
@@ -124,15 +119,7 @@ export default function AppShell({
               ))}
             </div>
           )}
-          {!admin && (
-            <div className="fc-sidebar-section">
-              <div className="fc-sidebar-section-label">Admin</div>
-              <Link href="/admin" prefetch className="fc-sidebar-link">
-                {SlidersIcon}
-                <span className="label">Sign in</span>
-              </Link>
-            </div>
-          )}
+
         </nav>
       </aside>
 
@@ -152,8 +139,7 @@ export default function AppShell({
             <span className="fc-topbar-page-title">{title}</span>
           </div>
           <div className="qc-topbar-right">
-            {realAdmin && (
-              <button
+            <button
                 type="button"
                 className={`qc-viewtoggle${previewing ? ' is-on' : ''}`}
                 aria-pressed={previewing}
@@ -162,12 +148,11 @@ export default function AppShell({
                 title={previewing ? 'Back to the admin view' : 'See the desk as a trader does'}
               >
                 <span className="qc-viewtoggle-track"><span className="qc-viewtoggle-knob" /></span>
-                <span className="qc-viewtoggle-label">Trader view</span>
-              </button>
-            )}
-            <span className={`qc-whoami${admin ? ' is-admin' : ''}`}>
+              <span className="qc-viewtoggle-label">Trader view</span>
+            </button>
+            <span className={`qc-whoami${previewing ? '' : ' is-admin'}`}>
               <span className="qc-dot" />
-              <span className="qc-name">{admin ? `${admin} · Admin` : 'Trading'}</span>
+              <span className="qc-name">{previewing ? 'Trading' : 'Desk'}</span>
             </span>
           </div>
         </header>
@@ -181,8 +166,8 @@ export default function AppShell({
               </svg>
             </span>
             <span>
-              Trader view — costs, margins and the admin screens are hidden, exactly as your desk
-              sees them. You are still signed in as <strong>{realAdmin}</strong>.
+              Trader view — costs, margins and the admin screens are hidden, exactly as a client-facing
+              screen shows them. <strong>Nothing is locked</strong>: turn it off to get everything back.
             </span>
             <button
               type="button"

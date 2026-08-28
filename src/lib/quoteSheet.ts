@@ -26,6 +26,14 @@ export interface QuoteSheetData {
   /** How long the price stands, and on what. Driven by the desk's own setting. */
   validity: string;
   rows: QuoteSheetRows | null;
+  /**
+   * The desk's own figures — cost, margin, what the deal earns.
+   *
+   * Present only on the internal copy. A sheet carrying this is banded and
+   * watermarked so it cannot be mistaken for the one a client gets, because
+   * the two are otherwise the same document.
+   */
+  internal: Array<[string, string]> | null;
 }
 
 const SHEET_W = 900;
@@ -40,6 +48,7 @@ const FC = {
   ink500: '#5a5a55',
   ink300: '#9a9a93',
   ink100: '#e8e8e2',
+  danger: '#a8351c',
   paper: '#ffffff',
 } as const;
 
@@ -62,13 +71,16 @@ export function drawQuoteSheet(canvas: HTMLCanvasElement, data: QuoteSheetData):
   const TABLE_HEAD = 30;
   const TABLE_ROW = 34;
   const PRICE_BLOCK = 132;
+  const INTERNAL_ROW = 26;
+  const BANNER = data.internal ? 34 : 0;
 
-  let flow = TERMS_TOP + Math.ceil(data.terms.length / 2) * TERM_ROW + 6;
+  let flow = TERMS_TOP + BANNER + Math.ceil(data.terms.length / 2) * TERM_ROW + 6;
   if (data.rows) {
     flow += (data.rows.title ? 26 : 0) + TABLE_HEAD + data.rows.body.length * TABLE_ROW + 20;
   }
   flow += PRICE_BLOCK + 34;
   flow += 20;
+  if (data.internal) flow += 30 + data.internal.length * INTERNAL_ROW + 14;
   const height = flow + 70;
 
   canvas.width = SHEET_W * SHEET_SCALE;
@@ -130,8 +142,20 @@ export function drawQuoteSheet(canvas: HTMLCanvasElement, data: QuoteSheetData):
     SHEET_W - M, 68, { size: 11, color: 'rgba(255,255,255,.62)', align: 'right' },
   );
 
-  // ── client
+  // ── internal band
   let y = 156;
+  if (data.internal) {
+    g.fillStyle = '#fdf0ed';
+    g.fillRect(0, 108, SHEET_W, 34);
+    g.fillStyle = FC.danger;
+    g.fillRect(0, 108, 5, 34);
+    text('Internal copy — costs and margin. Not for the client.', M, 130, {
+      size: 11, weight: 700, family: 'Archivo', color: FC.danger, track: 1.2,
+    });
+    y += 34;
+  }
+
+  // ── client
   text('Prepared for', M, y, { size: 9, weight: 700, family: 'Archivo', color: FC.ink500, track: 3, caps: true });
   text(data.client, M, y + 30, { size: 26, weight: 700, family: 'Archivo', color: FC.navy });
 
@@ -220,6 +244,27 @@ export function drawQuoteSheet(canvas: HTMLCanvasElement, data: QuoteSheetData):
 
   text(data.basis, M, y, { size: 12, color: FC.ink500 });
   text(data.validity, M, y + 20, { size: 11, color: FC.ink300 });
+  y += 44;
+
+  if (data.internal) {
+    y += 16;
+    text('What this deal earns', M, y, {
+      size: 9, weight: 700, family: 'Archivo', color: FC.danger, track: 3, caps: true,
+    });
+    y += 22;
+    g.strokeStyle = '#edc4bc';
+    for (const [label, value] of data.internal) {
+      text(label, M, y + 12, { size: 11, color: FC.ink500 });
+      text(value, SHEET_W - M, y + 12, {
+        size: 12, weight: 600, family: 'DM Mono', color: FC.navy, align: 'right',
+      });
+      g.beginPath();
+      g.moveTo(M, y + 20);
+      g.lineTo(SHEET_W - M, y + 20);
+      g.stroke();
+      y += INTERNAL_ROW;
+    }
+  }
 
   g.strokeStyle = FC.ink100;
   g.beginPath();

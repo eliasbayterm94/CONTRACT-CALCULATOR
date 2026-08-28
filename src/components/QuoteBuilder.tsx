@@ -68,6 +68,8 @@ export default function QuoteBuilder({
     reference.packaging.find((p) => p.traderDefault)?.key ?? reference.packaging[0]?.key ?? '';
 
   const [clientName, setClientName] = useState('');
+  /** The commercial the quote was sent to. Recorded on both copies. */
+  const [sentTo, setSentTo] = useState('');
   const [destinationKey, setDestinationKey] = useState(reference.destinations[0]?.key ?? '');
   const [incoterm, setIncoterm] = useState<Incoterm>('DDP');
   const [processKey, setProcessKey] = useState(reference.processes[0]?.key ?? '');
@@ -194,17 +196,20 @@ export default function QuoteBuilder({
     [today, settings.validDays],
   );
 
-  const buildSheet = useCallback((): QuoteSheetData | null => {
+  const buildSheet = useCallback((kind: 'client' | 'internal' = 'client'): QuoteSheetData | null => {
     if (!result || !destination || !activeRung || !plan) return null;
     const unit = UNIT_LABEL[destination.quoteUnit];
+    const inQuoteCurrency = (usd: number) =>
+      totalInQuoteCurrency(usd, destination.quoteCurrency, reference.fx);
     return {
-      title: 'Price quote',
+      title: kind === 'internal' ? 'Price quote · internal' : 'Price quote',
       client: clientName || '—',
       reference: draftReference(Date.now()),
       terms: [
         ['Destination', destination.label],
         ['Incoterm', incoterm],
         ['Coffee type', reference.processes.find((p) => p.key === input.processKey)?.label ?? ''],
+        ...(sentTo.trim() ? [['Sent to', sentTo.trim()] as [string, string]] : []),
         ['Packaging', reference.packaging.find((p) => p.key === input.packagingKey)?.label ?? ''],
         ['Quantity', `${plain(result.bags, 0)} bags · ${plain(result.totalLbs, 0)} lb`],
         ['Shipment window', `${monthLabel(fromMonth)} – ${monthLabel(safeTo)}`],
@@ -227,8 +232,21 @@ export default function QuoteBuilder({
           money(m.billing, destination.quoteCurrency, 0),
         ]),
       },
+      internal:
+        kind === 'internal'
+          ? [
+              ['Margin quoted', percent(activeRung.margin, 2)],
+              ['Floor for this size', `${percent(result.band.minMargin, 2)} · ${result.band.label}`],
+              ['Break-even', `${money(toQuoteUnit(result.totalCostUsdPerLb, destination.quoteCurrency, destination.quoteUnit, reference.fx), destination.quoteCurrency, PRICE_DP)}/${unit} · ${cents(result.totalCostUsdPerLb)}/lb`],
+              ['Margin per lb', cents(activeRung.priceUsdPerLb - result.totalCostUsdPerLb)],
+              ['Margin on the contract', money(inQuoteCurrency((activeRung.priceUsdPerLb - result.totalCostUsdPerLb) * result.totalLbs), destination.quoteCurrency, 0)],
+              ['Priced at KC', `${plain(input.kcUsdPerLb * 100, 2)}¢ + premium ${plain(input.premiumUsdPerLb * 100, 2)}¢`],
+              ...(result.typePremiumUsdPerLb ? [[`${result.typeLabel} premium`, cents(result.typePremiumUsdPerLb)] as [string, string]] : []),
+              ...(result.waivedFixedCost ? [['Fixed cost', 'Waived'] as [string, string]] : []),
+            ]
+          : null,
     };
-  }, [result, destination, activeRung, plan, clientName, incoterm, reference, input,
+  }, [result, destination, activeRung, plan, clientName, sentTo, incoterm, reference, input,
       fromMonth, safeTo, effectiveHold, holdsUntil]);
 
   /** Adopt a rung: the headline, the schedule and the quote sheet all follow. */
@@ -281,7 +299,7 @@ export default function QuoteBuilder({
       { key: 'k', label: 'Jump to the KC price', run: () => focusField('kc-price') },
       { key: 'b', label: 'Jump to bags', run: () => focusField('bags') },
       { key: 'c', label: 'Jump to the client name', run: () => focusField('client') },
-      { key: 'd', label: 'Download the quote', run: () => setSheet(buildSheet()) },
+      { key: 'd', label: 'Download the client quote', run: () => setSheet(buildSheet('client')) },
       ...(isAdmin
         ? [{ key: 'a', label: 'Show or hide the arithmetic', run: () => setShowWorking((on) => !on) }]
         : []),
@@ -439,6 +457,14 @@ export default function QuoteBuilder({
                   <input
                     id="client" className="qc-input" value={clientName}
                     onChange={(e) => setClientName(e.target.value)} placeholder="Client name"
+                  />
+                </div>
+                <div className="qc-field wide">
+                  <label className="qc-label" htmlFor="sent-to">Sent to</label>
+                  <input
+                    id="sent-to" className="qc-input" value={sentTo}
+                    onChange={(e) => setSentTo(e.target.value)}
+                    placeholder="Who it went to at the client"
                   />
                 </div>
                 <div className="qc-field wide">
@@ -1291,23 +1317,37 @@ export default function QuoteBuilder({
                   <span className="qc-export-sub">
                     {result.band.belowPolicy && !isAdmin
                       ? `Under ${settings.volumeBrackets[0]?.fromBags} bags this quote cannot be sent without admin.`
-                      : 'A one-page sheet with the terms and the price. No costs, no margin.'}{' '}
+                      : 'The client copy carries the terms and the price. The internal one adds what the deal earns.'}{' '}
                     <button type="button" className="qc-keyhint" onClick={() => setShortcutsOpen(true)}>
                       Press <kbd>?</kbd> for shortcuts
                     </button>
                   </span>
                 </div>
-                <button
-                  type="button"
-                  className="fc-btn fc-btn-navy"
-                  onClick={() => setSheet(buildSheet())}
-                  disabled={result.band.belowPolicy && !isAdmin}
-                >
-                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                    <path d="M12 3v12M7 11l5 5 5-5M4 21h16" />
-                  </svg>
-                  Download quote
-                </button>
+                <div className="qc-export-actions">
+                  {isAdmin && (
+                    <button
+                      type="button"
+                      className="fc-btn fc-btn-ghost qc-export-internal"
+                      onClick={() => setSheet(buildSheet('internal'))}
+                    >
+                      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M12 3v12M7 11l5 5 5-5M4 21h16" />
+                      </svg>
+                      Internal copy
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    className="fc-btn fc-btn-navy"
+                    onClick={() => setSheet(buildSheet('client'))}
+                    disabled={result.band.belowPolicy && !isAdmin}
+                  >
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <path d="M12 3v12M7 11l5 5 5-5M4 21h16" />
+                    </svg>
+                    Client quote
+                  </button>
+                </div>
               </div>
             </>
           )}

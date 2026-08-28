@@ -1617,6 +1617,13 @@ tfoot.qc-total td { border-top: 2px solid var(--fc-navy); font-weight: var(--fc-
   border-top: 1px solid var(--fc-ink-100); font-size: 11px; color: var(--fc-ink-500);
 }
 
+/* ── Two copies of the quote ───────────────────────────────────────── */
+.qc-export-actions { display: flex; gap: 9px; flex-wrap: wrap; }
+.qc-export-internal {
+  border-color: rgba(255, 255, 255, .3); color: #fff; background: transparent;
+}
+.qc-export-internal:hover { background: rgba(255, 255, 255, .12); }
+
 /* ── A shipment priced by hand ─────────────────────────────────────── */
 .qc-input.num.set { width: 92px; }
 .qc-price-cell.is-set {

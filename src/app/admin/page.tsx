@@ -6,9 +6,7 @@ import { FxEditor, MonthTableEditor } from '@/components/admin/MarketEditor';
 import CoffeeTypeEditor from '@/components/admin/CoffeeTypeEditor';
 import { OverrideEditor, SeasonEditor } from '@/components/admin/PremiumEditor';
 import CardLabels from '@/components/admin/CardLabels';
-import { ChangeCodeForm, CreateCodeForm, SignInForm, SignOutButton } from '@/components/admin/SignInForm';
 import { saveKcPrices } from '@/app/actions';
-import { currentAdmin, isAdminCodeSet } from '@/lib/auth';
 import {
   getAuditLog,
   getCostLines,
@@ -44,10 +42,8 @@ const SECTIONS = [
 ] as const;
 
 export default async function AdminPage() {
-  const admin = await currentAdmin();
-  const locked = !admin;
-  const codeSet = await isAdminCodeSet();
-  const codeManagedByEnv = Boolean(process.env.ADMIN_PASSWORD);
+  // Nothing here is gated any more; every editor is open.
+  const locked = false;
 
   const [reference, allLines, allDestinations, allPackaging, allProcesses, fxRows, kcPrices, season, overrides, spot, audit] =
     await Promise.all([
@@ -99,24 +95,6 @@ export default async function AdminPage() {
           Changes take effect on the next quote and are written to the audit log.
         </p>
       </div>
-
-      <section className="qc-panel">
-        {admin ? (
-          <div className="qc-panel-body qc-signed-in">
-            <span style={{ fontSize: 13 }}>
-              Signed in as <strong>{admin}</strong>. The session lasts 12 hours.
-            </span>
-            <div className="qc-signed-in-actions">
-              <ChangeCodeForm managedByEnv={codeManagedByEnv} />
-              <SignOutButton />
-            </div>
-          </div>
-        ) : codeSet ? (
-          <SignInForm />
-        ) : (
-          <CreateCodeForm />
-        )}
-      </section>
 
       <CardLabels />
 

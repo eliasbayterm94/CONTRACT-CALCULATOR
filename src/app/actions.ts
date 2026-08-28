@@ -2,20 +2,7 @@
 
 import { revalidatePath } from 'next/cache';
 import { cookies } from 'next/headers';
-import {
-  COOKIE_MAX_AGE,
-  COOKIE_NAME,
-  clearFailedAttempts,
-  currentAdmin,
-  isAdminCodeSet,
-  issueToken,
-  lockoutRemaining,
-  recordFailedAttempt,
-  requireAdmin,
-  setAdminCode,
-  VIEW_COOKIE,
-  verifyAdminCode,
-} from '@/lib/auth';
+import { DESK_ACTOR, VIEW_COOKIE, VIEW_MAX_AGE } from '@/lib/auth';
 import {
   appendAudit,
   applyClearFxOverride,
@@ -44,118 +31,16 @@ const num = (form: FormData, key: string, fallback = 0): number => {
 };
 const str = (form: FormData, key: string): string => String(form.get(key) ?? '').trim();
 
-/* ------------------------------------------------------------------ auth -- */
+/* ------------------------------------------------------------------ desk -- */
 
-/** Minimum that is worth calling a code rather than a guess. */
-const MIN_CODE_LENGTH = 6;
-
-async function startSession(actor: string): Promise<void> {
-  const store = await cookies();
-  store.set(COOKIE_NAME, await issueToken(actor), {
-    httpOnly: true,
-    sameSite: 'lax',
-    secure: process.env.NODE_ENV === 'production',
-    path: '/',
-    maxAge: COOKIE_MAX_AGE,
-  });
-}
-
-function waitMessage(seconds: number): string {
-  if (seconds >= 60) {
-    const minutes = Math.ceil(seconds / 60);
-    return `Too many attempts. Try again in ${minutes} minute${minutes === 1 ? '' : 's'}.`;
-  }
-  return `Too many attempts. Try again in ${seconds} second${seconds === 1 ? '' : 's'}.`;
-}
-
-/** First run: whoever opens admin first chooses the code. */
-async function createAdminCodeImpl(
-  _prev: ActionResult | null,
-  form: FormData,
-): Promise<ActionResult> {
-  if (await isAdminCodeSet()) {
-    return { ok: false, message: 'A code is already set. Sign in with it, or change it once inside.' };
-  }
-  const code = str(form, 'code');
-  const confirm = str(form, 'confirm');
-  if (code.length < MIN_CODE_LENGTH) {
-    return { ok: false, message: `Use at least ${MIN_CODE_LENGTH} characters.` };
-  }
-  if (code !== confirm) return { ok: false, message: 'The two codes do not match.' };
-
-  const actor = str(form, 'name') || 'admin';
-  await setAdminCode(code);
-  await startSession(actor);
-  await logAudit(actor, 'session', null, 'code_created');
-  revalidatePath('/', 'layout');
-  return { ok: true, message: `Code set. You are signed in as ${actor}.` };
-}
-
-async function signInImpl(_prev: ActionResult | null, form: FormData): Promise<ActionResult> {
-  const waiting = await lockoutRemaining();
-  if (waiting > 0) return { ok: false, message: waitMessage(waiting) };
-
-  const code = str(form, 'code');
-  if (!code) return { ok: false, message: 'Enter the admin code.' };
-  if (!(await isAdminCodeSet())) return { ok: false, message: 'No admin code has been set yet.' };
-
-  if (!(await verifyAdminCode(code))) {
-    const wait = await recordFailedAttempt();
-    await logAudit(str(form, 'name') || 'unknown', 'session', null, 'sign_in_failed');
-    return {
-      ok: false,
-      message: wait > 0 ? `Wrong code. ${waitMessage(wait)}` : 'Wrong code.',
-    };
-  }
-
-  await clearFailedAttempts();
-  const actor = str(form, 'name') || 'admin';
-  await startSession(actor);
-  await logAudit(actor, 'session', null, 'sign_in');
-  revalidatePath('/', 'layout');
-  return { ok: true, message: `Signed in as ${actor}.` };
-}
-
-/** Change the code from inside. Requires the current one, so a stolen session cannot lock you out. */
-async function changeAdminCodeImpl(
-  _prev: ActionResult | null,
-  form: FormData,
-): Promise<ActionResult> {
-  const g = await guard();
-  if ('ok' in g) return g;
-  if (process.env.ADMIN_PASSWORD) {
-    return { ok: false, message: 'The code is set by ADMIN_PASSWORD on this server. Change it there.' };
-  }
-  const current = str(form, 'current');
-  const next = str(form, 'code');
-  const confirm = str(form, 'confirm');
-  if (!(await verifyAdminCode(current))) return { ok: false, message: 'That is not the current code.' };
-  if (next.length < MIN_CODE_LENGTH) {
-    return { ok: false, message: `Use at least ${MIN_CODE_LENGTH} characters.` };
-  }
-  if (next !== confirm) return { ok: false, message: 'The two codes do not match.' };
-  if (next === current) return { ok: false, message: 'That is the code you already have.' };
-
-  await setAdminCode(next);
-  await logAudit(g.actor, 'session', null, 'code_changed');
-  return { ok: true, message: 'Code changed. It applies from the next sign-in.' };
-}
-
-export async function signOut(): Promise<void> {
-  const actor = (await currentAdmin()) ?? 'unknown';
-  const store = await cookies();
-  store.delete(COOKIE_NAME);
-  store.delete(VIEW_COOKIE);
-  await logAudit(actor, 'session', null, 'sign_out');
-  revalidatePath('/', 'layout');
-}
-
-async function guard(): Promise<{ actor: string } | ActionResult> {
-  try {
-    return { actor: await requireAdmin() };
-  } catch {
-    return { ok: false, message: 'Sign in to make changes.' };
-  }
+/**
+ * Every caller is the desk.
+ *
+ * With no sign-in there is nobody to turn away, so this exists only to keep
+ * one name on the audit log and one shape for the actions below.
+ */
+function guard(): { actor: string } {
+  return { actor: DESK_ACTOR };
 }
 
 function refreshAll(): void {
@@ -172,9 +57,6 @@ function refreshAll(): void {
  * there is no way to get stuck on the wrong side of it.
  */
 export async function setTraderView(on: boolean): Promise<void> {
-  // Only an admin has anything to preview. A stale tab calling this after the
-  // session lapsed should do nothing, not replace the page with an error.
-  if (!(await currentAdmin())) return;
   const store = await cookies();
   if (on) {
     store.set(VIEW_COOKIE, 'trader', {
@@ -182,7 +64,7 @@ export async function setTraderView(on: boolean): Promise<void> {
       sameSite: 'lax',
       secure: process.env.NODE_ENV === 'production',
       path: '/',
-      maxAge: COOKIE_MAX_AGE,
+      maxAge: VIEW_MAX_AGE,
     });
   } else {
     store.delete(VIEW_COOKIE);
@@ -193,8 +75,7 @@ export async function setTraderView(on: boolean): Promise<void> {
 /* ------------------------------------------------------- admin mutations -- */
 
 async function saveKcPricesImpl(_prev: ActionResult | null, form: FormData): Promise<ActionResult> {
-  const g = await guard();
-  if ('ok' in g) return g;
+  const g = guard();
   const entered: Array<[string, number]> = [];
   for (const [key, value] of form.entries()) {
     if (!key.startsWith('kc_')) continue;
@@ -221,8 +102,7 @@ async function saveSeasonalPremiumsImpl(
   _prev: ActionResult | null,
   form: FormData,
 ): Promise<ActionResult> {
-  const g = await guard();
-  if ('ok' in g) return g;
+  const g = guard();
   const entered: Array<[number, number]> = [];
   for (const [key, value] of form.entries()) {
     if (!key.startsWith('season_')) continue;
@@ -249,8 +129,7 @@ async function savePremiumOverridesImpl(
   _prev: ActionResult | null,
   form: FormData,
 ): Promise<ActionResult> {
-  const g = await guard();
-  if ('ok' in g) return g;
+  const g = guard();
 
   const removed: string[] = [];
   const kept: Array<[string, number, string]> = [];
@@ -291,8 +170,7 @@ async function savePremiumOverridesImpl(
 }
 
 async function saveCostLinesImpl(_prev: ActionResult | null, form: FormData): Promise<ActionResult> {
-  const g = await guard();
-  if ('ok' in g) return g;
+  const g = guard();
   const keys = form.getAll('cl_key').map(String);
   await mutateState((state) => {
     for (const key of keys) {
@@ -311,8 +189,7 @@ async function saveCostLinesImpl(_prev: ActionResult | null, form: FormData): Pr
 }
 
 async function saveDestinationsImpl(_prev: ActionResult | null, form: FormData): Promise<ActionResult> {
-  const g = await guard();
-  if ('ok' in g) return g;
+  const g = guard();
   const keys = form.getAll('d_key').map(String);
   await mutateState((state) => {
     for (const key of keys) {
@@ -337,8 +214,7 @@ async function savePackagingAndProcessImpl(
   _prev: ActionResult | null,
   form: FormData,
 ): Promise<ActionResult> {
-  const g = await guard();
-  if ('ok' in g) return g;
+  const g = guard();
   const packKeys = form.getAll('p_key').map(String);
   const traderDefault = str(form, 'trader_packaging');
   await mutateState((state) => {
@@ -363,8 +239,7 @@ async function saveEngineSettingsImpl(
   _prev: ActionResult | null,
   form: FormData,
 ): Promise<ActionResult> {
-  const g = await guard();
-  if ('ok' in g) return g;
+  const g = guard();
 
   const minMargin = num(form, 'minMargin') / 100;
   if (minMargin < 0 || minMargin >= 1) {
@@ -423,8 +298,7 @@ async function saveEngineSettingsImpl(
 }
 
 async function refreshRatesImpl(): Promise<ActionResult> {
-  const g = await guard();
-  if ('ok' in g) return g;
+  const g = guard();
   const result = await refreshFxRates(g.actor);
   refreshAll();
   const parts: string[] = [];
@@ -435,8 +309,7 @@ async function refreshRatesImpl(): Promise<ActionResult> {
 }
 
 async function saveFxOverridesImpl(_prev: ActionResult | null, form: FormData): Promise<ActionResult> {
-  const g = await guard();
-  if ('ok' in g) return g;
+  const g = guard();
   const currencies = form.getAll('fx_key').map(String) as CurrencyCode[];
   const pinned: string[] = [];
   const released: string[] = [];
@@ -494,8 +367,7 @@ async function saveCoffeeTypesImpl(
   _prev: ActionResult | null,
   form: FormData,
 ): Promise<ActionResult> {
-  const g = await guard();
-  if ('ok' in g) return g;
+  const g = guard();
 
   const keys = form.getAll('ct_key').map(String);
   const newLabel = str(form, 'ct_new_label');
@@ -559,8 +431,5 @@ export const saveDestinations = guarded('saveDestinations', saveDestinationsImpl
 export const savePackagingAndProcess = guarded('savePackagingAndProcess', savePackagingAndProcessImpl);
 export const saveEngineSettings = guarded('saveEngineSettings', saveEngineSettingsImpl);
 export const saveFxOverrides = guarded('saveFxOverrides', saveFxOverridesImpl);
-export const createAdminCode = guarded('createAdminCode', createAdminCodeImpl);
-export const signIn = guarded('signIn', signInImpl);
-export const changeAdminCode = guarded('changeAdminCode', changeAdminCodeImpl);
 export const refreshRates = guarded('refreshRates', refreshRatesImpl);
 export const saveCoffeeTypes = guarded('saveCoffeeTypes', saveCoffeeTypesImpl);

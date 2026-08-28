@@ -144,6 +144,18 @@ const MIGRATIONS: Record<number, (stored: AppState) => AppState> = {
       premiumOverrides: [],
     };
   },
+  3: (stored) => {
+    // The sign-in is gone, so its stored password hash, its lockout counter
+    // and its session secret are not configuration any more — they are a
+    // credential nobody can use, sitting in a document. Dropped.
+    const {
+      adminCode: _code,
+      adminLockout: _lockout,
+      sessionSecret: _secret,
+      ...settings
+    } = stored.settings as Record<string, unknown>;
+    return { ...stored, version: 4, settings };
+  },
   2: (stored) => {
 
     const processes = [...(stored.processes as ProcessType[])];

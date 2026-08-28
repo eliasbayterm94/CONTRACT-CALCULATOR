@@ -126,3 +126,26 @@ describe('moving a stored document to coffee types', () => {
     expect(migrate({ ...v1(), version: 99 } as never)).toBeNull();
   });
 });
+
+describe('dropping the sign-in', () => {
+  it('takes the stored credential with it', () => {
+    const withCode = v1();
+    Object.assign(withCode.settings, {
+      adminCode: { salt: 'abc', hash: 'def' },
+      adminLockout: { failed: 2, until: 'x' },
+      sessionSecret: 'a-secret',
+    });
+    const out = migrate(withCode)!;
+    expect(out.settings.adminCode).toBeUndefined();
+    expect(out.settings.adminLockout).toBeUndefined();
+    expect(out.settings.sessionSecret).toBeUndefined();
+  });
+
+  it('leaves the pricing policy beside it alone', () => {
+    const withCode = v1();
+    Object.assign(withCode.settings, { adminCode: { salt: 'a', hash: 'b' } });
+    const out = migrate(withCode)!;
+    expect(out.settings.minMargin).toBe(0.18);
+    expect(out.version).toBe(STATE_VERSION);
+  });
+});

@@ -27,6 +27,7 @@ export default function MultiShipmentBuilder({
   overrides: PremiumOverride[];
 }) {
   const [clientName, setClientName] = useState('');
+  const [sentTo, setSentTo] = useState('');
   const [destinationKey, setDestinationKey] = useState(reference.destinations[0]?.key ?? '');
   const [incoterm, setIncoterm] = useState<Incoterm>('DDP');
   const [processKey, setProcessKey] = useState(reference.processes[0]?.key ?? '');
@@ -145,17 +146,18 @@ export default function MultiShipmentBuilder({
   const [today] = useState(() => new Date());
   const holdsUntil = useMemo(() => validUntil(today, settings.validDays), [today, settings.validDays]);
 
-  const buildSheet = useCallback((): QuoteSheetData | null => {
+  const buildSheet = useCallback((kind: 'client' | 'internal' = 'client'): QuoteSheetData | null => {
     if (!contract || !destination) return null;
     const unit = UNIT_LABEL[destination.quoteUnit];
     return {
-      title: 'Multi-shipment quote',
+      title: kind === 'internal' ? 'Multi-shipment quote · internal' : 'Multi-shipment quote',
       client: clientName || '—',
       reference: draftReference(Date.now()),
       terms: [
         ['Destination', destination.label],
         ['Incoterm', incoterm],
         ['Coffee type', reference.processes.find((p) => p.key === processKey)?.label ?? ''],
+        ...(sentTo.trim() ? [['Sent to', sentTo.trim()] as [string, string]] : []),
         ['Packaging', reference.packaging.find((p) => p.key === packagingKey)?.label ?? ''],
         ['Quantity', `${plain(contract.totalBags, 0)} bags · ${plain(contract.totalLbs, 0)} lb`],
         ['Shipment window', `${monthLabel(fromMonth)} – ${monthLabel(safeTo)}`],
@@ -183,8 +185,33 @@ export default function MultiShipmentBuilder({
           money(totalInQuoteCurrency(s.valueUsd, destination.quoteCurrency, reference.fx), destination.quoteCurrency, 0),
         ]),
       },
+      internal:
+        kind === 'internal'
+          ? [
+              ['Blend earns', percent(contract.blendedMargin, 2)],
+              ['Floor for this size', `${percent(floorMargin, 2)} · ${band.label}`],
+              ['Weighted break-even', cents(contract.weightedCostUsdPerLb)],
+              ['Margin per lb', cents(contract.consolidatedUsdPerLb - contract.weightedCostUsdPerLb)],
+              [
+                'Margin on the contract',
+                money(
+                  inQuote((contract.consolidatedUsdPerLb - contract.weightedCostUsdPerLb) * contract.totalLbs),
+                  destination.quoteCurrency,
+                  0,
+                ),
+              ],
+              ['Weighted KC', cents(contract.weightedKcUsdPerLb)],
+              ...(contract.setPriceCount
+                ? [[
+                    'Priced by hand',
+                    `${contract.setPriceCount} of ${contract.shipments.length} shipments`,
+                  ] as [string, string]]
+                : []),
+            ]
+          : null,
     };
-  }, [contract, destination, clientName, incoterm, reference, processKey, packagingKey, fromMonth, safeTo, effectiveHold]);
+  }, [contract, destination, clientName, sentTo, incoterm, reference, processKey, packagingKey,
+      fromMonth, safeTo, effectiveHold, floorMargin, band.label]);
 
   /**
    * The bracket the whole contract earns.
@@ -265,6 +292,14 @@ export default function MultiShipmentBuilder({
             <div className="qc-field wide">
               <label className="qc-label" htmlFor="m-client">Client</label>
               <input id="m-client" className="qc-input" value={clientName} onChange={(e) => setClientName(e.target.value)} placeholder="Client name" />
+            </div>
+            <div className="qc-field wide">
+              <label className="qc-label" htmlFor="m-sent-to">Sent to</label>
+              <input
+                id="m-sent-to" className="qc-input" value={sentTo}
+                onChange={(e) => setSentTo(e.target.value)}
+                placeholder="Who it went to at the client"
+              />
             </div>
             <div className="qc-field">
               <label className="qc-label" htmlFor="m-dest">Destination</label>
@@ -657,14 +692,25 @@ export default function MultiShipmentBuilder({
           <div className="qc-export">
             <div className="qc-export-copy">
               <span className="qc-export-title">Send this quote</span>
-              <span className="qc-export-sub">A one-page sheet with the terms and the price. No costs, no margin.</span>
+              <span className="qc-export-sub">The client copy carries the terms and the price. The internal one adds what the deal earns.</span>
             </div>
-            <button type="button" className="fc-btn fc-btn-navy" onClick={() => setSheet(buildSheet())}>
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M12 3v12M7 11l5 5 5-5M4 21h16" />
-              </svg>
-              Download quote
-            </button>
+            <div className="qc-export-actions">
+              <button
+                type="button" className="fc-btn fc-btn-ghost qc-export-internal"
+                onClick={() => setSheet(buildSheet('internal'))}
+              >
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M12 3v12M7 11l5 5 5-5M4 21h16" />
+                </svg>
+                Internal copy
+              </button>
+              <button type="button" className="fc-btn fc-btn-navy" onClick={() => setSheet(buildSheet('client'))}>
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M12 3v12M7 11l5 5 5-5M4 21h16" />
+                </svg>
+                Client quote
+              </button>
+            </div>
           </div>
         </>
       )}
