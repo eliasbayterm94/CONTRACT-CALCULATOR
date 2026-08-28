@@ -2,6 +2,13 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import KcField from './KcField';
+import SheetDialog from './SheetDialog';
+import {
+  boardFileName,
+  boardReference,
+  drawBoardSheet,
+  type BoardSheetData,
+} from '@/lib/boardSheet';
 import { calculateQuote, rungAt, volumeBand } from '@/lib/pricing/engine';
 import { MONTH_OF_YEAR_NAMES, monthOfYear, premiumForMonth } from '@/lib/pricing/premium';
 import { PRICE_DP, UNIT_LABEL } from '@/lib/pricing/units';
@@ -56,6 +63,7 @@ export default function PriceBoard({
   const [margin, setMargin] = useState('25');
   const [month, setMonth] = useState(months[0]?.key ?? '');
   const [refreshedAt, setRefreshedAt] = useState<string | null>(null);
+  const [sheet, setSheet] = useState<BoardSheetData | null>(null);
 
   /**
    * Pull the C on open, and again while the board is left up.
@@ -138,6 +146,67 @@ export default function PriceBoard({
   }, [brackets, destinations, incoterm, processKey, packagingKey, kcCents, premium,
       holdMonths, month, waiveFixedCost, reference, typedMargin, marginValid, settings]);
 
+  const marginLabel =
+    typedMargin === null
+      ? "Each bracket at its own floor"
+      : `Quoted at ${plain(Number(margin), 2)}%`;
+
+  const packagingLabel = reference.packaging.find((p) => p.key === packagingKey)?.label ?? '';
+  const typeLabel = reference.processes.find((p) => p.key === processKey)?.label ?? '';
+
+  /** The grid on screen, as the file the team gets. */
+  const buildSheet = useCallback((): BoardSheetData | null => {
+    if (!board) return null;
+    return {
+      reference: boardReference(Date.now()),
+      marginLabel,
+      context: [
+        ['KC', `${plain(Number(kcCents) || 0, 2)}¢`],
+        ['Premium', premium.source === 'unset' ? 'not set' : `${plain(premium.premiumCents, 2)}¢`],
+        ['Shipping', monthLabel(month)],
+        ['Held', `${holdMonths} month${holdMonths === 1 ? '' : 's'}`],
+        ['Incoterm', incoterm],
+        ['Coffee', typeLabel],
+        ['Packaging', packagingLabel],
+      ],
+      columns: destinations.map((d) => ({
+        label: d.label,
+        unit: `${d.quoteCurrency}/${UNIT_LABEL[d.quoteUnit]}`,
+      })),
+      rows: board.map((row) => ({
+        label: row.band.label,
+        floorLabel: `floor ${plain(row.bracket.minMargin * 100, 0)}%`,
+        cells: row.cells.map((cell) => {
+          const shown = cell.atTyped ?? cell.atFloor;
+          const differs =
+            cell.atTyped && cell.atFloor &&
+            Math.abs(cell.atTyped.displayPrice - cell.atFloor.displayPrice) > 1e-9;
+          return {
+            price: shown
+              ? money(shown.displayPrice, cell.destination.quoteCurrency, PRICE_DP)
+              : '—',
+            floor:
+              differs && cell.atFloor
+                ? `floor ${money(cell.atFloor.displayPrice, cell.destination.quoteCurrency, PRICE_DP)}`
+                : null,
+          };
+        }),
+      })),
+      footnote:
+        `${waiveFixedCost ? 'Fixed cost waived. ' : ''}Cost per pound does not move with volume — ` +
+        'a part load ships consolidated — so the bracket sets the floor and nothing else. ' +
+        'Prices move with the C: confirm before quoting.',
+    };
+  }, [board, marginLabel, kcCents, premium, month, holdMonths, incoterm, typeLabel,
+      packagingLabel, destinations, waiveFixedCost, margin]);
+
+  const renderSheet = useCallback(
+    (canvas: HTMLCanvasElement) => {
+      if (sheet) drawBoardSheet(canvas, sheet);
+    },
+    [sheet],
+  );
+
   const kcAge = refreshedAt
     ? `Refreshed ${new Date(refreshedAt).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}`
     : null;
@@ -207,10 +276,22 @@ export default function PriceBoard({
 
       <section className="qc-panel">
         <div className="qc-panel-head">
-          <h2 className="qc-panel-title">Price board</h2>
-          <span className="qc-panel-note">
-            {destinations.length} destinations · {brackets.length} quantity brackets
-          </span>
+          <h2 className="qc-panel-title">
+            Price board
+            <span className={`qc-margintag${typedMargin === null ? ' is-floors' : ''}`}>
+              {marginLabel}
+            </span>
+          </h2>
+          <button
+            type="button" className="fc-btn fc-btn-navy"
+            disabled={!board}
+            onClick={() => setSheet(buildSheet())}
+          >
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M12 3v12M7 11l5 5 5-5M4 21h16" />
+            </svg>
+            Send to the team
+          </button>
         </div>
 
         <div className="qc-board-bar">
@@ -319,6 +400,14 @@ export default function PriceBoard({
           a part load ships consolidated — so the bracket sets the floor and nothing else.
         </p>
       </section>
+
+      <SheetDialog
+        data={sheet}
+        render={renderSheet}
+        filename={sheet ? boardFileName(sheet.reference) : 'price-board.png'}
+        title="Price board"
+        onClose={() => setSheet(null)}
+      />
     </>
   );
 }

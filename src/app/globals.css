@@ -1618,6 +1618,20 @@ tfoot.qc-total td { border-top: 2px solid var(--fc-navy); font-weight: var(--fc-
 }
 
 /* ── The price board ───────────────────────────────────────────────── */
+/* What the board is quoted at, beside its name so a screenshot carries it. */
+.qc-margintag {
+  display: inline-flex; align-items: center; margin-left: 10px;
+  padding: 3px 10px; border-radius: var(--fc-radius-pill);
+  background: var(--fc-yellow); color: var(--fc-navy);
+  font-family: var(--fc-font-display); font-weight: var(--fc-fw-bold);
+  font-size: 9.5px; letter-spacing: var(--fc-ls-eyebrow); text-transform: uppercase;
+  white-space: nowrap;
+}
+.qc-margintag.is-floors {
+  background: var(--fc-cream); color: var(--fc-ink-500);
+  border: 1px solid var(--fc-ink-100);
+}
+
 .qc-board-bar {
   padding: 12px 16px; background: var(--fc-cream);
   border-bottom: 1px solid var(--fc-ink-100);
