@@ -17,7 +17,7 @@ import {
 } from '@/lib/store';
 import { refreshFxRates } from '@/lib/fx';
 import { guarded } from '@/lib/actionGuard';
-import type { CurrencyCode, QuoteUnit } from '@/lib/pricing/types';
+import { EDITABLE_COST_GROUPS, type CostGroup, type CurrencyCode, type QuoteUnit } from '@/lib/pricing/types';
 import { trmToUsdPerCop } from '@/lib/pricing/units';
 
 export interface ActionResult {
@@ -179,6 +179,13 @@ async function saveCostLinesImpl(_prev: ActionResult | null, form: FormData): Pr
       line.amount = num(form, `cl_amount_${key}`);
       line.lbsPerUnit = num(form, `cl_lbs_${key}`);
       line.currency = (str(form, `cl_currency_${key}`) || 'COP') as CurrencyCode;
+      // Only the two origin stages are the desk's to set. Anything else would
+      // move a line across the incoterm ladder, which is the engine's contract
+      // with the quote, not a costing decision.
+      const group = str(form, `cl_group_${key}`) as CostGroup;
+      if (EDITABLE_COST_GROUPS.includes(group) && EDITABLE_COST_GROUPS.includes(line.group)) {
+        line.group = group;
+      }
       line.isMargin = Boolean(form.get(`cl_margin_${key}`));
       line.active = Boolean(form.get(`cl_active_${key}`));
     }

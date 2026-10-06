@@ -1,5 +1,6 @@
 import type {
   ContractResult,
+  CostGroup,
   CostLine,
   CostLineResult,
   CostLineTrace,
@@ -22,6 +23,7 @@ import type {
   VolumeBand,
   VolumeBracket,
 } from './types';
+import { COST_GROUP_FROM, INCOTERM_RANK, incotermCovers } from './types';
 import {
   DEFAULT_LBS_PER_CONTAINER,
   LB_PER_KG,
@@ -211,6 +213,15 @@ function resolveAmount(
   }
 }
 
+/** Who carries a group's cost when the quote stops below its rung. */
+const BUYER_PAYS: Record<CostGroup, string> = {
+  exw: 'buyer collects at the mill',
+  fob: 'buyer moves it from the mill',
+  freight: 'buyer pays ocean freight',
+  import: 'buyer clears import',
+  hold: 'the buyer carries the coffee',
+};
+
 export function calculateQuote(input: QuoteInput, ref: ReferenceData): QuoteResult {
   const { fx, settings } = ref;
   const destination = need(ref.destinations, input.destinationKey, 'destination');
@@ -251,7 +262,16 @@ export function calculateQuote(input: QuoteInput, ref: ReferenceData): QuoteResu
   let financeIndex = -1;
   let waivedFixedCost = false;
 
-  for (const line of [...ref.costLines].sort((a, b) => a.sortOrder - b.sortOrder)) {
+  // Ladder first, then the line's own order. The breakdown prints a heading
+  // whenever the group changes between two rows, so a group split across the
+  // sort order would be headed twice — and admin can move a line's stage.
+  const ordered = [...ref.costLines].sort(
+    (a, b) =>
+      INCOTERM_RANK[COST_GROUP_FROM[a.group]] - INCOTERM_RANK[COST_GROUP_FROM[b.group]] ||
+      a.sortOrder - b.sortOrder,
+  );
+
+  for (const line of ordered) {
     let included = true;
     let excludedReason: string | undefined;
 
@@ -262,22 +282,15 @@ export function calculateQuote(input: QuoteInput, ref: ReferenceData): QuoteResu
       included = false;
       excludedReason = 'Waived — strategic deal';
       waivedFixedCost = true;
-    } else if (line.group === 'freight' && input.incoterm === 'FOB') {
+    } else if (!incotermCovers(input.incoterm, line.group)) {
+      // Each group joins the price at one rung of the ladder and stays in from
+      // there up. Below that rung the buyer has taken the coffee already, so
+      // the cost is theirs — on EXW that is everything past the mill gate.
       included = false;
-      excludedReason = 'FOB — buyer pays ocean freight';
-    } else if (line.group === 'import' && input.incoterm !== 'DDP') {
+      excludedReason = `${input.incoterm} — ${BUYER_PAYS[line.group]}`;
+    } else if (line.group === 'hold' && months <= 0) {
       included = false;
-      excludedReason = `${input.incoterm} — buyer clears import`;
-    } else if (line.group === 'hold') {
-      // Carrying cost only lands on us under DDP. On FOB and CIF the buyer owns
-      // the coffee from the port onward and carries it themselves.
-      if (input.incoterm !== 'DDP') {
-        included = false;
-        excludedReason = `${input.incoterm} — the buyer carries the coffee`;
-      } else if (months <= 0) {
-        included = false;
-        excludedReason = `Covered by fixed cost up to ${settings.freeHoldMonths} months`;
-      }
+      excludedReason = `Covered by fixed cost up to ${settings.freeHoldMonths} months`;
     }
 
     // Finance is a rate on the cargo value, so it can only be priced once the

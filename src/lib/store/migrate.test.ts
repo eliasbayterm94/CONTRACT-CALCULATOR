@@ -27,7 +27,11 @@ describe('moving a stored document to the seasonal premium', () => {
     const out = migrate(v1())!;
     expect(out.version).toBe(STATE_VERSION);
     expect(out.settings.minMargin).toBe(0.18);
-    expect(out.costLines).toEqual([{ key: 'freight_agent', amount: 4_200_000 }]);
+    // The costed amount is the desk's; the stage and print order are the
+    // engine's, and the EXW step sets them from the seed.
+    expect(out.costLines).toEqual([
+      { key: 'freight_agent', amount: 4_200_000, group: 'fob', sortOrder: 110 },
+    ]);
     expect(out.destinations.find((d) => d.key === 'rotterdam')).toMatchObject({
       quoteCurrency: 'EUR', quoteUnit: 'kg',
     });
@@ -147,5 +151,55 @@ describe('dropping the sign-in', () => {
     const out = migrate(withCode)!;
     expect(out.settings.minMargin).toBe(0.18);
     expect(out.version).toBe(STATE_VERSION);
+  });
+});
+
+describe('splitting origin costs for EXW', () => {
+  /** A version 4 document: the shape just before EXW existed. */
+  function v4(): AppState {
+    return {
+      ...v1(),
+      version: 4,
+      costLines: [
+        // Costed by the desk, well away from the seeded figure.
+        { key: 'milling', group: 'fob', sortOrder: 30, amount: 61_000, active: true },
+        { key: 'port_costs', group: 'fob', sortOrder: 80, amount: 1_450_000, active: true },
+        // Not a seeded line: nothing to infer a stage from.
+        { key: 'desk_courier', group: 'fob', sortOrder: 999, amount: 90_000, active: true },
+      ],
+      destinations: [
+        { key: 'rotterdam', allowedIncoterms: ['FOB', 'CIF', 'DDP'] },
+        { key: 'dubai', allowedIncoterms: ['FOB', 'CIF'] },
+      ],
+    } as unknown as AppState;
+  }
+
+  it('moves the seeded lines onto the stage they belong to', () => {
+    const lines = Object.fromEntries(migrate(v4())!.costLines.map((l) => [l.key, l]));
+    expect(lines.milling.group).toBe('exw');
+    expect(lines.port_costs.group).toBe('fob');
+  });
+
+  it('leaves the desk amounts exactly where they were', () => {
+    const lines = Object.fromEntries(migrate(v4())!.costLines.map((l) => [l.key, l]));
+    expect(lines.milling.amount).toBe(61_000);
+    expect(lines.port_costs.amount).toBe(1_450_000);
+  });
+
+  it("leaves a line the desk added themselves alone, rather than guessing", () => {
+    const own = migrate(v4())!.costLines.find((l) => l.key === 'desk_courier')!;
+    expect(own.group).toBe('fob');
+    expect(own.sortOrder).toBe(999);
+    expect(own.amount).toBe(90_000);
+  });
+
+  it('opens EXW on a destination that took the whole ladder', () => {
+    const rotterdam = migrate(v4())!.destinations.find((d) => d.key === 'rotterdam')!;
+    expect(rotterdam.allowedIncoterms).toEqual(['EXW', 'FOB', 'CIF', 'DDP']);
+  });
+
+  it('leaves a destination the desk trimmed by hand', () => {
+    const dubai = migrate(v4())!.destinations.find((d) => d.key === 'dubai')!;
+    expect(dubai.allowedIncoterms).toEqual(['FOB', 'CIF']);
   });
 });

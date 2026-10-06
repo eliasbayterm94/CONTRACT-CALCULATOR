@@ -11,8 +11,10 @@ client's own currency and unit at the very end.
 
 ```
 green coffee  = KC + quality premium
-differential  = packaging + milling + transport + port + freight + fixed cost
-                (+ ocean freight from CIF, + import and unloading at DDP,
+differential  = packaging + milling + bag marks + GMF + fixed cost          EXW and up
+                (+ inland haulage, port, freight agent and the FNC
+                   contribution from FOB,
+                 + ocean freight from CIF, + import and unloading at DDP,
                  + storage while we carry it — DDP only)
 finance       = monthly rate x billed months x (green coffee + differential)   DDP only
 break-even    = green coffee + differential + finance
@@ -82,18 +84,21 @@ The admin tables are built for the job rather than for filling in once:
 ## Rules that differ from the original sheet
 
 1. **Fixed cost is 30¢/lb**, not 25¢. The extra 5¢ covers up to two months of carry on every quote.
-2. **Storage and finance are DDP only.** On FOB and CIF the buyer owns the coffee from the port and
-   carries it themselves.
-3. **The carry has a two-month grace, applied as a deduction.** A five-month hold bills three
+2. **Storage and finance are DDP only.** On EXW, FOB and CIF the buyer owns the coffee from the
+   mill or the port and carries it themselves.
+3. **EXW stops the price at the dry mill door.** Everything past the gate — inland haulage, port,
+   the freight agent and the FNC contribution, which is levied on the export registration — is the
+   buyer's. The destination still sets the currency and unit the quote is printed in.
+4. **The carry has a two-month grace, applied as a deduction.** A five-month hold bills three
    months, not five — otherwise month 2 costs nothing and month 3 costs triple.
-4. **The hold can never exceed the shipment window.** Set a two-month window and the selector caps
+5. **The hold can never exceed the shipment window.** Set a two-month window and the selector caps
    at two.
-5. **Finance is charged on the full cargo value**, not just the logistics differential. The sheet
+6. **Finance is charged on the full cargo value**, not just the logistics differential. The sheet
    ignored the coffee, which is roughly 75% of what is actually financed.
-6. **Margin is explicit** — a share of the selling price, on full landed cost. Both are settings.
-7. **Grain Pro and bag marks are permanent lines**, no longer optional.
-8. **Traders quote 70 kg jute only.** Admin can use any packaging.
-9. **Missing rates warn** rather than silently pricing at zero.
+7. **Margin is explicit** — a share of the selling price, on full landed cost. Both are settings.
+8. **Grain Pro and bag marks are permanent lines**, no longer optional.
+9. **Traders quote 70 kg jute only.** Admin can use any packaging.
+10. **Missing rates warn** rather than silently pricing at zero.
 
 All of it is covered by the engine tests (`npm test`), which reconcile line by line against the
 original sheet before applying the changes above.
@@ -159,7 +164,11 @@ The app seeds itself on first boot, so a fresh checkout comes up with the sheet 
 - **Dubai storage** has no rate.
 - **35 kg packaging at 24,843 COP** is 2.7x a 70 kg bag for half the volume. Plausible for a vacuum
   pack, worth checking against an invoice.
-- **GMF** is a flat 3.19 COP/lb, as in the sheet, not 0.4% of peso flows.
+- **GMF** is a flat 3.19 COP/lb, as in the sheet, not 0.4% of peso flows. It sits in the EXW stage
+  and so rides on every term, which is deliberate: the tax falls on peso payments the desk makes at
+  the mill whoever ships the coffee.
+- **The fixed cost is charged in full on EXW**, its 5¢ carry cover included, exactly as it is on
+  FOB. Nothing is carried on an EXW sale, so the desk may want a term-aware fixed cost later.
 - **Partial containers** warn rather than reprice — freight, port and inland transport assume full
   loads.
 - **Multi-shipment shares one hold period.** Per-shipment holds would need a column per row.

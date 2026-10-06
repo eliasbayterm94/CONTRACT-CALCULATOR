@@ -21,6 +21,7 @@ import {
   validUntil,
 } from '@/lib/pricing/engine';
 import {
+  COST_GROUP_LABEL,
   INCOTERMS,
   type CostLineResult,
   type CurrencyCode,
@@ -493,6 +494,13 @@ export default function QuoteBuilder({
                       </button>
                     ))}
                   </div>
+                  {incoterm === 'EXW' && (
+                    <p className="qc-hint">
+                      Priced at the dry mill door. Haulage, port, export formalities and
+                      freight are the buyer&rsquo;s — {destination?.label ?? 'the destination'} only
+                      sets the currency and unit.
+                    </p>
+                  )}
                 </div>
                 <div className="qc-field">
                   <label className="qc-label" htmlFor="process">Coffee type</label>
@@ -1225,7 +1233,7 @@ export default function QuoteBuilder({
                               {newGroup && (
                                 <tr className="qc-group-row">
                                   <td colSpan={7}>
-                                    {GROUP_LABEL[line.group]}
+                                    {COST_GROUP_LABEL[line.group]}
                                     {line.group === 'hold' && result.billableMonths > 0 &&
                                       ` — ${result.billableMonths} month${result.billableMonths === 1 ? '' : 's'} billed`}
                                   </td>
@@ -1394,10 +1402,3 @@ function stepValue(step: PriceStep, currency: CurrencyCode, unit: QuoteUnit): st
   if (step.kind === 'quotePrice') return `${money(step.value, currency, PRICE_DP)}/${UNIT_LABEL[unit]}`;
   return `${plain(step.value, 6)} USD/lb`;
 }
-
-const GROUP_LABEL: Record<string, string> = {
-  fob: 'Origin & FOB',
-  freight: 'Ocean freight',
-  import: 'Destination',
-  hold: 'Holding the contract',
-};

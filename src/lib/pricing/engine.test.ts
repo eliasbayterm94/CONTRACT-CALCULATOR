@@ -22,7 +22,7 @@ import {
   SEED_PROCESSES,
   SEED_SETTINGS,
 } from './reference';
-import type { QuoteInput, ReferenceData } from './types';
+import { COST_GROUP_FROM, INCOTERMS, INCOTERM_RANK, type QuoteInput, type ReferenceData } from './types';
 import { ceilPrice, fromQuoteUnit, toQuoteUnit } from './units';
 import { apportion, deliveryPlan, monthSpan, monthsBetween } from './schedule';
 
@@ -443,7 +443,7 @@ describe('warnings', () => {
 
 describe('the audit view', () => {
   it('re-adds the published lines to the reported total', () => {
-    for (const incoterm of ['FOB', 'CIF', 'DDP'] as const) {
+    for (const incoterm of INCOTERMS) {
       const result = calculateQuote(input({ incoterm, destinationKey: 'rotterdam', holdMonths: 6 }), ref);
       const check = reconcile(result);
       expect(check.matches, `${incoterm} breakdown does not add up`).toBe(true);
@@ -609,5 +609,118 @@ describe('figures that have gone out of date', () => {
     );
     expect(ahead.ageDays).toBe(0);
     expect(ahead.stale).toBe(false);
+  });
+});
+
+describe('EXW — the coffee bought at the mill door', () => {
+  /** Everything the seed charges between the mill gate and the ship's rail. */
+  const afterTheGate = ['internal_transport', 'ground_transport', 'contribution', 'port_costs', 'freight_agent'];
+
+  it('stops the price at the mill: 43.84c against the 61.41c FOB differential', () => {
+    const r = calculateQuote(input({ incoterm: 'EXW' }), ref);
+    expect(r.differentialUsdPerLb).toBeCloseTo(0.4384, 4);
+  });
+
+  it('drops the haulage, port and export lines, and nothing else', () => {
+    const exw = calculateQuote(input({ incoterm: 'EXW' }), ref);
+    const fob = calculateQuote(input({ incoterm: 'FOB' }), ref);
+
+    const dropped = exw.lines.filter((l) => !l.included).map((l) => l.key);
+    expect(dropped).toEqual(expect.arrayContaining(afterTheGate));
+
+    const stillIn = ['packaging', 'grain_pro', 'milling', 'bag_marks', 'gmf', 'fixed_cost'];
+    for (const key of stillIn) {
+      expect(exw.lines.find((l) => l.key === key)!.included, key).toBe(true);
+    }
+
+    // The gap between the two terms is exactly what FOB charges past the gate.
+    const gap = fob.lines
+      .filter((l) => afterTheGate.includes(l.key))
+      .reduce((sum, l) => sum + l.usdPerLb, 0);
+    expect(fob.differentialUsdPerLb - exw.differentialUsdPerLb).toBeCloseTo(gap, 10);
+  });
+
+  it('leaves freight, import and the carry out, the same as FOB does', () => {
+    const r = calculateQuote(input({ destinationKey: 'rotterdam', incoterm: 'EXW', holdMonths: 12 }), ref);
+    for (const key of ['seafreight', 'import_cost', 'unloading_ddp', 'storage', 'finance']) {
+      expect(r.lines.find((l) => l.key === key)!.included, key).toBe(false);
+    }
+    expect(r.storageUsdPerLb).toBe(0);
+    expect(r.financeUsdPerLb).toBe(0);
+  });
+
+  it('says who is paying, on every line it leaves out', () => {
+    const r = calculateQuote(input({ incoterm: 'EXW' }), ref);
+    for (const key of afterTheGate) {
+      expect(r.lines.find((l) => l.key === key)!.excludedReason, key)
+        .toBe('EXW — buyer moves it from the mill');
+    }
+    expect(r.lines.find((l) => l.key === 'seafreight')!.excludedReason)
+      .toBe('EXW — buyer pays ocean freight');
+  });
+
+  it('is the cheapest rung, and the ladder only climbs from there', () => {
+    const costs = INCOTERMS.map(
+      (incoterm) =>
+        calculateQuote(input({ destinationKey: 'rotterdam', incoterm, holdMonths: 6 }), ref)
+          .totalCostUsdPerLb,
+    );
+    for (let i = 1; i < costs.length; i += 1) {
+      expect(costs[i], `${INCOTERMS[i]} is not dearer than ${INCOTERMS[i - 1]}`)
+        .toBeGreaterThan(costs[i - 1]);
+    }
+  });
+
+  it('still quotes in the destination currency — EXW only changes what is in the price', () => {
+    const r = calculateQuote(input({ destinationKey: 'rotterdam', incoterm: 'EXW' }), ref);
+    expect(r.quoteCurrency).toBe('EUR');
+    expect(r.quoteUnit).toBe('kg');
+  });
+
+  it('warns when a destination is not open to the term', () => {
+    const closed = {
+      ...ref,
+      destinations: ref.destinations.map((d) =>
+        d.key === 'ny' ? { ...d, allowedIncoterms: ['FOB' as const, 'CIF' as const, 'DDP' as const] } : d,
+      ),
+    };
+    const r = calculateQuote(input({ incoterm: 'EXW' }), closed);
+    expect(r.warnings.some((w) => w.text.includes('EXW is not configured'))).toBe(true);
+  });
+});
+
+describe('the order the breakdown is printed in', () => {
+  /** The breakdown heads a group whenever it changes, so each must run once. */
+  function groupRuns(lines: Array<{ group: string }>): string[] {
+    return lines.map((l) => l.group).filter((g, i, all) => g !== all[i - 1]);
+  }
+
+  it('walks the ladder, heading each stage exactly once', () => {
+    const runs = groupRuns(calculateQuote(input({ incoterm: 'DDP', holdMonths: 6 }), ref).lines);
+    expect(runs).toEqual(['exw', 'fob', 'freight', 'import', 'hold']);
+    expect(new Set(runs).size).toBe(runs.length);
+  });
+
+  it('holds after admin moves a line to the other stage', () => {
+    // The desk decides the contribution is theirs at the mill after all.
+    const moved = {
+      ...ref,
+      costLines: ref.costLines.map((l) => (l.key === 'contribution' ? { ...l, group: 'exw' as const } : l)),
+    };
+    const lines = calculateQuote(input({ incoterm: 'DDP', holdMonths: 6 }), moved).lines;
+    const runs = groupRuns(lines);
+    expect(new Set(runs).size).toBe(runs.length);
+    expect(lines.find((l) => l.key === 'contribution')!.group).toBe('exw');
+
+    // And the line now rides on an EXW quote, which is the point of moving it.
+    const exw = calculateQuote(input({ incoterm: 'EXW' }), moved);
+    expect(exw.lines.find((l) => l.key === 'contribution')!.included).toBe(true);
+    expect(exw.differentialUsdPerLb).toBeCloseTo(0.4384 + 0.06, 4);
+  });
+
+  it('never prints a line before the stage that pays for it', () => {
+    const lines = calculateQuote(input({ incoterm: 'DDP', holdMonths: 6 }), ref).lines;
+    const ranks = lines.map((l) => INCOTERM_RANK[COST_GROUP_FROM[l.group]]);
+    expect(ranks).toEqual([...ranks].sort((a, b) => a - b));
   });
 });
