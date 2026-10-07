@@ -13,7 +13,7 @@ import { calculateQuote, rungAt, volumeBand } from '@/lib/pricing/engine';
 import { MONTH_OF_YEAR_NAMES, monthOfYear, premiumForMonth } from '@/lib/pricing/premium';
 import { PRICE_DP, UNIT_LABEL } from '@/lib/pricing/units';
 import { monthIndex, monthKeyFrom, monthLabel, type CalendarMonth } from '@/lib/pricing/schedule';
-import type { Incoterm, ReferenceData, VolumeBracket } from '@/lib/pricing/types';
+import { INCOTERMS, type Incoterm, type ReferenceData, type VolumeBracket } from '@/lib/pricing/types';
 import type { PremiumOverride, SeasonalPremium } from '@/lib/store/types';
 import { cents, money, plain } from '@/lib/format';
 
@@ -313,7 +313,7 @@ export default function PriceBoard({
               {reference.packaging.map((p) => <option key={p.key} value={p.key}>{p.label}</option>)}
             </select>
             <div className="qc-seg" role="group" aria-label="Incoterm">
-              {(['FOB', 'CIF', 'DDP'] as Incoterm[]).map((i) => (
+              {INCOTERMS.map((i) => (
                 <button
                   key={i} type="button"
                   className={`qc-seg-btn${incoterm === i ? ' is-on' : ''}`}

@@ -11,25 +11,58 @@ export type CurrencyCode = 'USD' | 'COP' | 'EUR' | 'AUD' | 'GBP' | 'CAD';
 export const CURRENCIES: CurrencyCode[] = ['USD', 'COP', 'EUR', 'AUD', 'GBP', 'CAD'];
 
 /** Incoterm ladder. Each tier is a superset of the one before it. */
-export type Incoterm = 'FOB' | 'CIF' | 'DDP';
+export type Incoterm = 'EXW' | 'FOB' | 'CIF' | 'DDP';
 
-export const INCOTERMS: Incoterm[] = ['FOB', 'CIF', 'DDP'];
+export const INCOTERMS: Incoterm[] = ['EXW', 'FOB', 'CIF', 'DDP'];
+
+/** Where each term sits on the ladder. Higher carries everything below it. */
+export const INCOTERM_RANK: Record<Incoterm, number> = {
+  EXW: 0,
+  FOB: 1,
+  CIF: 2,
+  DDP: 3,
+};
 
 /**
  * Which stage of the journey a cost line belongs to.
- *  - `fob`     : always included
+ *  - `exw`     : always included — the coffee milled, bagged and on the truck
+ *  - `fob`     : from FOB up — inland haulage, port and export formalities
  *  - `freight` : from CIF up — ocean freight
  *  - `import`  : DDP only — import clearance and unloading
  *  - `hold`    : DDP only — storage and finance while we carry the coffee
  */
-export type CostGroup = 'fob' | 'freight' | 'import' | 'hold';
+export type CostGroup = 'exw' | 'fob' | 'freight' | 'import' | 'hold';
 
 export const COST_GROUP_LABEL: Record<CostGroup, string> = {
-  fob: 'Origin & FOB',
+  exw: 'At the mill',
+  fob: 'Inland & export',
   freight: 'Ocean freight',
   import: 'Destination',
   hold: 'Holding the contract',
 };
+
+/**
+ * The lowest incoterm at which a group's costs are ours to pay.
+ *
+ * On EXW the buyer takes the coffee at the dry mill door, so everything from
+ * the gate onward — haulage, port, the export registration the contribution
+ * funds — is theirs. A term includes a group when it ranks at or above it.
+ */
+export const COST_GROUP_FROM: Record<CostGroup, Incoterm> = {
+  exw: 'EXW',
+  fob: 'FOB',
+  freight: 'CIF',
+  import: 'DDP',
+  hold: 'DDP',
+};
+
+/** The two stages a desk may move a cost line between, in ladder order. */
+export const EDITABLE_COST_GROUPS: CostGroup[] = ['exw', 'fob'];
+
+/** Whether `incoterm` carries the costs in `group`. */
+export function incotermCovers(incoterm: Incoterm, group: CostGroup): boolean {
+  return INCOTERM_RANK[incoterm] >= INCOTERM_RANK[COST_GROUP_FROM[group]];
+}
 
 /**
  * How a cost line's raw amount becomes a per-pound figure.

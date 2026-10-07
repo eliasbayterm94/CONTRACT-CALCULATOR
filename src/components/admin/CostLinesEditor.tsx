@@ -6,7 +6,14 @@ import SaveBar from './SaveBar';
 import { dirtyClass, useTracked } from './useTracked';
 import { saveCostLines, type ActionResult } from '@/app/actions';
 import { calculateQuote } from '@/lib/pricing/engine';
-import { COST_GROUP_LABEL, CURRENCIES, type CostLine, type QuoteInput, type ReferenceData } from '@/lib/pricing/types';
+import {
+  COST_GROUP_LABEL,
+  CURRENCIES,
+  EDITABLE_COST_GROUPS,
+  type CostLine,
+  type QuoteInput,
+  type ReferenceData,
+} from '@/lib/pricing/types';
 import { cents, money, plain } from '@/lib/format';
 
 /**
@@ -105,7 +112,24 @@ export default function CostLinesEditor({
                       </span>
                     )}
                   </td>
-                  <td style={{ color: 'var(--fc-ink-500)' }}>{COST_GROUP_LABEL[line.group]}</td>
+                  <td>
+                    {EDITABLE_COST_GROUPS.includes(line.group) ? (
+                      <select
+                        name={`cl_group_${line.key}`}
+                        className={dirtyClass('qc-select', isDirty(line.key, 'group'))}
+                        value={line.group}
+                        disabled={locked}
+                        aria-label={`${line.label} stage`}
+                        onChange={(e) => update(line.key, 'group', e.target.value as CostLine['group'])}
+                      >
+                        {EDITABLE_COST_GROUPS.map((g) => (
+                          <option key={g} value={g}>{COST_GROUP_LABEL[g]}</option>
+                        ))}
+                      </select>
+                    ) : (
+                      <span style={{ color: 'var(--fc-ink-500)' }}>{COST_GROUP_LABEL[line.group]}</span>
+                    )}
+                  </td>
                   <td className="qc-num">
                     <NumberInput
                       name={`cl_amount_${line.key}`}

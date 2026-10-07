@@ -21,6 +21,7 @@ import {
 } from '../pricing/reference';
 import { upcomingContractMonths } from '../kc';
 import type {
+  CostLine,
   CurrencyCode,
   Destination,
   EngineSettings,
@@ -155,6 +156,30 @@ const MIGRATIONS: Record<number, (stored: AppState) => AppState> = {
       ...settings
     } = stored.settings as Record<string, unknown>;
     return { ...stored, version: 4, settings };
+  },
+  4: (stored) => {
+    // EXW splits the old "Origin & FOB" block in two: what the coffee costs
+    // milled and bagged at the dry mill, and what it costs to get it from the
+    // mill gate onto the ship. Only the seeded lines are reclassified — a line
+    // the desk added themselves has no place on the ladder we can infer, so it
+    // stays where it is and admin can move it.
+    const seeded = new Map(SEED_COST_LINES.map((l) => [l.key, l]));
+    const costLines = (stored.costLines as CostLine[]).map((line) => {
+      const seed = seeded.get(line.key);
+      // Costed amounts, currency, margin flag and active flag all carry across
+      // untouched; only the stage and its print order move.
+      return seed ? { ...line, group: seed.group, sortOrder: seed.sortOrder } : line;
+    });
+
+    // Every destination that already took the full ladder takes EXW too. One
+    // trimmed by hand is left alone — that was a deliberate restriction.
+    const destinations = (stored.destinations as Destination[]).map((d) =>
+      d.allowedIncoterms?.includes('DDP') && !d.allowedIncoterms.includes('EXW')
+        ? { ...d, allowedIncoterms: ['EXW' as const, ...d.allowedIncoterms] }
+        : d,
+    );
+
+    return { ...stored, version: 5, costLines, destinations };
   },
   2: (stored) => {
 
